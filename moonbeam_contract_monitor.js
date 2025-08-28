@@ -328,7 +328,12 @@ class MoonbeamContractMonitor {
             ]);
 
             const parseTxs = (list) => (list || [])
-                .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase() && tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
+                .filter(tx => (
+                    tx.isError === '0' &&
+                    (!tx.txreceipt_status || tx.txreceipt_status === '1') &&
+                    ((tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase()) ||
+                     (tx.from && tx.from.toLowerCase() === this.contractAddress.toLowerCase()))
+                ))
                 .map(tx => ({
                     from: tx.from,
                     to: tx.to,
@@ -337,8 +342,9 @@ class MoonbeamContractMonitor {
                 }));
 
             [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                if (!seen.has(tx.hash)) {
-                    seen.add(tx.hash);
+                const key = `${tx.hash}:${tx.from}:${tx.to}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
                     allTxs.push(tx);
                 }
             });
@@ -542,10 +548,20 @@ class MoonbeamContractMonitor {
     processTransactions(transactions) {
         const newData = new Map();
         transactions.forEach(tx => {
-            // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
-            const fromAddress = tx.from.toLowerCase();
-            const current = newData.get(fromAddress) || 0;
-            newData.set(fromAddress, current + 1);
+            const from = tx.from?.toLowerCase();
+            const to = tx.to?.toLowerCase();
+            let counterparty = null;
+
+            if (from === this.contractAddress.toLowerCase() && to && to !== this.contractAddress.toLowerCase()) {
+                counterparty = to;
+            } else if (to === this.contractAddress.toLowerCase() && from && from !== this.contractAddress.toLowerCase()) {
+                counterparty = from;
+            }
+
+            if (counterparty) {
+                const current = newData.get(counterparty) || 0;
+                newData.set(counterparty, current + 1);
+            }
         });
         return newData;
     }
