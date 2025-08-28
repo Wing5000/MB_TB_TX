@@ -11,6 +11,12 @@ class MoonbeamContractMonitor {
             'https://1rpc.io/glmr'
         ];
         this.currentRpcIndex = 0;
+        this.wsRpcEndpoints = [
+            'wss://wss.api.moonbeam.network',
+            'wss://moonbeam.public.blastapi.io',
+            'wss://moonbeam.unitedbloc.com:2001'
+        ];
+        this.webSocket = null;
 
         // Moonscan API configuration (set via localStorage: moonscanApiKey)
         this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
@@ -179,9 +185,81 @@ class MoonbeamContractMonitor {
 
     async startInitialLoad() {
         await this.loadTransactionData();
+        this.startWebSocketListener();
         if (this.autoRefreshEnabled) {
             this.startAutoRefresh();
         }
+    }
+
+    startWebSocketListener() {
+        if (!('WebSocket' in window)) {
+            console.warn('WebSocket not supported in this browser.');
+            return;
+        }
+
+        let index = 0;
+        const connect = () => {
+            if (index >= this.wsRpcEndpoints.length) {
+                console.warn('Wszystkie WebSocket endpoints są niedostępne');
+                return;
+            }
+
+            const url = this.wsRpcEndpoints[index++];
+            console.log(`\uD83D\uDD0C Próba połączenia WebSocket: ${url}`);
+            const ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                console.log(`\u2705 Połączono z WebSocket: ${url}`);
+                ws.send(JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: Date.now(),
+                    method: 'eth_subscribe',
+                    params: ['logs', { address: this.contractAddress }]
+                }));
+            };
+
+            ws.onmessage = async (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message.method === 'eth_subscription' && message.params?.result) {
+                        const log = message.params.result;
+                        try {
+                            const tx = await this.makeRpcCall('eth_getTransactionByHash', [log.transactionHash]);
+                            if (tx && tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase()) {
+                                const from = tx.from.toLowerCase();
+                                const current = this.transactionData.get(from) || 0;
+                                this.transactionData.set(from, current + 1);
+                                const blockNumber = parseInt(tx.blockNumber, 16);
+                                if (blockNumber > this.lastFetchedBlock) {
+                                    this.lastFetchedBlock = blockNumber;
+                                }
+                                this.prepareDisplayData();
+                                this.displayTable();
+                                this.updateMetrics();
+                                this.saveState();
+                            }
+                        } catch (err) {
+                            console.error('Błąd pobierania transakcji WebSocket:', err);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Błąd przetwarzania wiadomości WebSocket:', err);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error('Błąd WebSocket:', err);
+            };
+
+            ws.onclose = () => {
+                console.warn('WebSocket zamknięty, ponawiam próbę za 5s');
+                setTimeout(connect, 5000);
+            };
+
+            this.webSocket = ws;
+        };
+
+        connect();
     }
 
     showError(friendlyMessage, technicalDetail) {
