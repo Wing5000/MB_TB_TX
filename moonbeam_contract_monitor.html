@@ -389,6 +389,11 @@
                     'https://1rpc.io/glmr'
                 ];
                 this.currentRpcIndex = 0;
+
+                // Moonscan API configuration (set via localStorage: moonscanApiKey)
+                this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
+                this.moonscanRateLimit = 5; // requests per second
+                this.moonscanLastRequest = 0;
                 
                 this.transactionData = new Map();
                 this.displayData = [];
@@ -540,6 +545,72 @@
                 } finally {
                     this.setLoading(false);
                 }
+            }
+
+            async fetchTransactionsWithMoonscan() {
+                const baseUrl = 'https://api-moonbeam.moonscan.io/api';
+                const params = new URLSearchParams({
+                    module: 'account',
+                    action: 'txlist',
+                    address: this.contractAddress,
+                    startblock: '0',
+                    endblock: '99999999',
+                    sort: 'asc'
+                });
+
+                if (this.moonscanApiKey) {
+                    params.append('apikey', this.moonscanApiKey);
+                }
+
+                const maxRetries = 5;
+
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        const now = Date.now();
+                        const delay = Math.max(0, (1000 / this.moonscanRateLimit) - (now - this.moonscanLastRequest));
+                        if (delay > 0) {
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        }
+                        this.moonscanLastRequest = Date.now();
+
+                        const response = await fetch(`${baseUrl}?${params.toString()}`);
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.status !== '1') {
+                            const message = (data.message || data.result || 'Unknown Moonscan error');
+                            if (message.toLowerCase().includes('max rate limit')) {
+                                const backoff = (attempt + 1) * 1000;
+                                console.warn(`⚠️ Moonscan rate limit reached, retrying in ${backoff}ms`);
+                                await new Promise(resolve => setTimeout(resolve, backoff));
+                                continue;
+                            }
+                            throw new Error(message);
+                        }
+
+                        const txs = data.result
+                            .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase())
+                            .map(tx => ({
+                                from: tx.from,
+                                to: tx.to,
+                                hash: tx.hash,
+                                blockNumber: parseInt(tx.blockNumber)
+                            }));
+
+                        console.log(`🔍 Pobieranie transakcji z Moonscan API: ${txs.length}`);
+                        return txs;
+                    } catch (error) {
+                        console.error('Moonscan API error:', error.message);
+                        if (attempt === maxRetries - 1) {
+                            throw error;
+                        }
+                    }
+                }
+
+                return [];
             }
 
             async fetchTransactionsWithRPC() {
@@ -715,6 +786,16 @@
             }
 
             async fetchAllTransactions() {
+                try {
+                    const moonscanTxs = await this.fetchTransactionsWithMoonscan();
+                    if (moonscanTxs && moonscanTxs.length > 0) {
+                        return moonscanTxs;
+                    }
+                    console.log('ℹ️ Brak danych z Moonscanu, przełączam na RPC');
+                } catch (error) {
+                    console.warn('⚠️ Błąd Moonscan, przełączam na RPC:', error.message);
+                }
+
                 return await this.fetchTransactionsWithRPC();
             }
 
