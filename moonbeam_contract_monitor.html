@@ -546,7 +546,8 @@
                 const transactions = [];
                 let fromBlock = 0;
                 const toBlock = 'latest';
-                const batchSize = 5000; // Reasonable batch size
+                // Rozmiar batch jest dynamiczny, zmniejszany przy błędach aby odciążyć RPC
+                let batchSize = 5000; // Reasonable batch size
                 let currentFromBlock = fromBlock;
                 
                 console.log('🔍 Pobieranie transakcji z Moonbeam RPC...');
@@ -579,10 +580,10 @@
 
                     } catch (error) {
                         console.error(`❌ Błąd dla bloków ${currentFromBlock} - ${batchToBlock}:`, error.message);
-                        // Try smaller batch on error
-                        if (batchSize > 1000 && error.message.includes('query returned more than')) {
+                        // Try smaller batch on error and ensure it never goes below 1000
+                        if (error.message.includes('query returned more than')) {
                             console.log('📉 Zmniejszam rozmiar batch...');
-                            batchSize = 1000;
+                            batchSize = Math.max(1000, Math.floor(batchSize / 2)); // dziel rozmiar przez 2, min. 1000
                             continue;
                         }
                     }
