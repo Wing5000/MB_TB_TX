@@ -353,7 +353,15 @@ class MoonbeamContractMonitor {
 
                 const data = await response.json();
                 if (data.status !== '1') {
-                    const message = data.result || data.message || 'Unknown Moonscan error';
+                    let message = '';
+                    if (typeof data.result === 'string' && data.result && data.result.toUpperCase() !== 'NOTOK') {
+                        message = data.result;
+                    } else if (typeof data.message === 'string' && data.message.toUpperCase() !== 'NOTOK') {
+                        message = data.message;
+                    }
+                    if (!message) {
+                        message = 'Unknown Moonscan error';
+                    }
                     if (message.toLowerCase().includes('max rate limit')) {
                         const backoff = (attempt + 1) * 1000;
                         console.warn(`⚠️ Moonscan rate limit reached, retrying in ${backoff}ms`);
