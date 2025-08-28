@@ -389,6 +389,7 @@
                     'https://1rpc.io/glmr'
                 ];
                 this.currentRpcIndex = 0;
+                this.startBlock = 5000000; // block number where the contract was deployed
                 
                 this.transactionData = new Map();
                 this.displayData = [];
@@ -544,9 +545,15 @@
 
             async fetchTransactionsWithRPC() {
                 const transactions = [];
-                let fromBlock = 0;
-                const toBlock = 'latest';
-                const batchSize = 5000; // Reasonable batch size
+                let fromBlock = this.startBlock;
+                const savedLastBlock = localStorage.getItem('lastFetchedBlock');
+                if (savedLastBlock) {
+                    const parsed = parseInt(savedLastBlock, 10);
+                    if (!isNaN(parsed) && parsed >= this.startBlock) {
+                        fromBlock = parsed + 1;
+                    }
+                }
+                let batchSize = 5000; // Reasonable batch size
                 let currentFromBlock = fromBlock;
                 
                 console.log('🔍 Pobieranie transakcji z Moonbeam RPC...');
@@ -588,15 +595,10 @@
                     }
 
                     currentFromBlock = batchToBlock + 1;
-                    
+                    localStorage.setItem('lastFetchedBlock', batchToBlock.toString());
+
                     // Add delay to avoid rate limiting
                     await new Promise(resolve => setTimeout(resolve, 100));
-                    
-                    // Safety break for very large chains
-                    if (currentFromBlock > fromBlock + 50000) {
-                        console.log('🛑 Osiągnięto limit bezpieczeństwa (50k bloków)');
-                        break;
-                    }
                 }
 
                 console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
@@ -686,8 +688,6 @@
             }
 
             processTransactions(transactions) {
-                this.transactionData.clear();
-
                 transactions.forEach(tx => {
                     // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
                     const fromAddress = tx.from.toLowerCase();
