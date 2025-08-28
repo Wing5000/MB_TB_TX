@@ -28,9 +28,14 @@ class MoonbeamContractMonitor {
         this.searchQuery = '';
         this.searchTimeout = null;
         this.lastFetchedBlock = 0;
-        
+
+        this.loadState();
+
         this.initializeElements();
         this.setupEventListeners();
+        this.prepareDisplayData();
+        this.displayTable();
+        this.updateMetrics();
         this.startInitialLoad();
     }
 
@@ -120,6 +125,36 @@ class MoonbeamContractMonitor {
         }
     }
 
+    loadState() {
+        try {
+            const savedData = localStorage.getItem('transactionData');
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                this.transactionData = new Map(Object.entries(parsed));
+            }
+
+            const savedBlock = localStorage.getItem('lastFetchedBlock');
+            if (savedBlock) {
+                const block = parseInt(savedBlock, 10);
+                if (!isNaN(block)) {
+                    this.lastFetchedBlock = block;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading state from localStorage:', error);
+        }
+    }
+
+    saveState() {
+        try {
+            const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
+            localStorage.setItem('transactionData', serialized);
+            localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
+        } catch (error) {
+            console.error('Error saving state to localStorage:', error);
+        }
+    }
+
     async startInitialLoad() {
         await this.loadTransactionData();
         if (this.autoRefreshEnabled) {
@@ -165,11 +200,16 @@ class MoonbeamContractMonitor {
 
         try {
             const allTransactions = await this.fetchAllTransactions();
-            this.processTransactions(allTransactions);
+            const newData = this.processTransactions(allTransactions);
+            newData.forEach((count, address) => {
+                const current = this.transactionData.get(address) || 0;
+                this.transactionData.set(address, current + count);
+            });
             this.prepareDisplayData();
             this.displayTable();
             this.updateMetrics();
-            
+            this.saveState();
+
             console.log(`Załadowano ${allTransactions.length} transakcji z ${this.transactionData.size} unikalnych adresów`);
         } catch (error) {
             console.error('Error loading transaction data:', error);
@@ -452,12 +492,14 @@ class MoonbeamContractMonitor {
     }
 
     processTransactions(transactions) {
+        const newData = new Map();
         transactions.forEach(tx => {
             // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
             const fromAddress = tx.from.toLowerCase();
-            const current = this.transactionData.get(fromAddress) || 0;
-            this.transactionData.set(fromAddress, current + 1);
+            const current = newData.get(fromAddress) || 0;
+            newData.set(fromAddress, current + 1);
         });
+        return newData;
     }
 
     prepareDisplayData() {
