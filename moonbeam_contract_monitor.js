@@ -1,4 +1,4 @@
-const DATA_VERSION = 1;
+const DATA_VERSION = 2;
 
 class MoonbeamContractMonitor {
     constructor() {
@@ -30,6 +30,9 @@ class MoonbeamContractMonitor {
         this.searchQuery = '';
         this.searchTimeout = null;
         this.lastFetchedBlock = 0;
+        this.transactionsByDay = new Map();
+        this.blockTimestamps = new Map();
+        this.contractCreationTimestamp = null;
 
         this.loadState();
 
@@ -38,6 +41,7 @@ class MoonbeamContractMonitor {
         this.prepareDisplayData();
         this.displayTable();
         this.updateMetrics();
+        this.displayDailyCounts();
         this.startInitialLoad();
     }
 
@@ -58,7 +62,8 @@ class MoonbeamContractMonitor {
             addressHeader: document.getElementById('addressHeader'),
             txCountHeader: document.getElementById('txCountHeader'),
             addressSearch: document.getElementById('addressSearch'),
-            resetButton: document.getElementById('resetData')
+            resetButton: document.getElementById('resetData'),
+            dailyTransactionsList: document.getElementById('dailyTransactionsList')
         };
     }
 
@@ -84,11 +89,13 @@ class MoonbeamContractMonitor {
 
         this.elements.resetButton.addEventListener('click', () => {
             this.transactionData.clear();
+            this.transactionsByDay.clear();
             this.lastFetchedBlock = 0;
             this.saveState();
             this.prepareDisplayData();
             this.displayTable();
             this.updateMetrics();
+            this.displayDailyCounts();
             this.loadTransactionData();
         });
 
@@ -154,6 +161,22 @@ class MoonbeamContractMonitor {
                 this.transactionData = new Map(Object.entries(parsed));
             }
 
+            const dailyData = localStorage.getItem('transactionsByDay');
+            if (dailyData) {
+                const parsedDaily = JSON.parse(dailyData);
+                this.transactionsByDay = new Map(
+                    Object.entries(parsedDaily).map(([day, count]) => [parseInt(day, 10), count])
+                );
+            }
+
+            const savedCreation = localStorage.getItem('contractCreationTimestamp');
+            if (savedCreation) {
+                const ts = parseInt(savedCreation, 10);
+                if (!isNaN(ts)) {
+                    this.contractCreationTimestamp = ts;
+                }
+            }
+
             const savedBlock = localStorage.getItem('lastFetchedBlock');
             if (savedBlock) {
                 const block = parseInt(savedBlock, 10);
@@ -170,7 +193,11 @@ class MoonbeamContractMonitor {
         try {
             const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
             localStorage.setItem('transactionData', serialized);
+            localStorage.setItem('transactionsByDay', JSON.stringify(Object.fromEntries(this.transactionsByDay)));
             localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
+            if (this.contractCreationTimestamp) {
+                localStorage.setItem('contractCreationTimestamp', this.contractCreationTimestamp.toString());
+            }
             localStorage.setItem('dataVersion', DATA_VERSION.toString());
         } catch (error) {
             console.error('Error saving state to localStorage:', error);
@@ -222,6 +249,7 @@ class MoonbeamContractMonitor {
 
         try {
             const allTransactions = await this.fetchAllTransactions();
+            await this.updateDailyCounts(allTransactions);
             const newData = this.processTransactions(allTransactions);
             newData.forEach((count, address) => {
                 const current = this.transactionData.get(address) || 0;
@@ -230,6 +258,7 @@ class MoonbeamContractMonitor {
             this.prepareDisplayData();
             this.displayTable();
             this.updateMetrics();
+            this.displayDailyCounts();
             this.saveState();
 
             console.log(`Załadowano ${allTransactions.length} transakcji z ${this.transactionData.size} unikalnych adresów`);
@@ -315,6 +344,29 @@ class MoonbeamContractMonitor {
         return parseInt(info?.blockNumber || '0', 10);
     }
 
+    async getContractCreationTimestamp() {
+        if (this.contractCreationTimestamp) {
+            return this.contractCreationTimestamp;
+        }
+        const blockNumber = await this.getContractCreationBlock();
+        const blockHex = `0x${blockNumber.toString(16)}`;
+        const blockData = await this.makeRpcCall('eth_getBlockByNumber', [blockHex, false]);
+        this.contractCreationTimestamp = parseInt(blockData.timestamp, 16);
+        this.saveState();
+        return this.contractCreationTimestamp;
+    }
+
+    async getBlockTimestamp(blockNumber) {
+        if (this.blockTimestamps.has(blockNumber)) {
+            return this.blockTimestamps.get(blockNumber);
+        }
+        const blockHex = `0x${blockNumber.toString(16)}`;
+        const blockData = await this.makeRpcCall('eth_getBlockByNumber', [blockHex, false]);
+        const ts = parseInt(blockData.timestamp, 16);
+        this.blockTimestamps.set(blockNumber, ts);
+        return ts;
+    }
+
     /**
      * Pobiera pełną historię transakcji (zewnętrznych i wewnętrznych) z Moonscanu.
      */
@@ -355,7 +407,8 @@ class MoonbeamContractMonitor {
                     from: tx.from,
                     to: tx.to,
                     hash: tx.hash,
-                    blockNumber: parseInt(tx.blockNumber)
+                    blockNumber: parseInt(tx.blockNumber),
+                    timestamp: parseInt(tx.timeStamp, 10)
                 }));
 
             [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
@@ -484,14 +537,21 @@ class MoonbeamContractMonitor {
 
         const settled = await Promise.allSettled(txPromises);
 
-        return settled
-            .filter(res => res.status === 'fulfilled' && res.value && res.value.to && res.value.to.toLowerCase() === this.contractAddress.toLowerCase())
-            .map(res => ({
-                from: res.value.from,
-                to: res.value.to,
-                hash: res.value.hash,
-                blockNumber: parseInt(res.value.blockNumber, 16)
-            }));
+        const results = [];
+        for (const res of settled) {
+            if (res.status === 'fulfilled' && res.value && res.value.to && res.value.to.toLowerCase() === this.contractAddress.toLowerCase()) {
+                const blockNumber = parseInt(res.value.blockNumber, 16);
+                const timestamp = await this.getBlockTimestamp(blockNumber);
+                results.push({
+                    from: res.value.from,
+                    to: res.value.to,
+                    hash: res.value.hash,
+                    blockNumber,
+                    timestamp
+                });
+            }
+        }
+        return results;
     }
 
     async makeRpcCall(method, params) {
@@ -570,6 +630,25 @@ class MoonbeamContractMonitor {
             newData.set(fromAddress, current + 1);
         });
         return newData;
+    }
+
+    async updateDailyCounts(transactions) {
+        const creationTs = await this.getContractCreationTimestamp();
+        transactions.forEach(tx => {
+            const day = Math.floor((tx.timestamp - creationTs) / 86400);
+            const current = this.transactionsByDay.get(day) || 0;
+            this.transactionsByDay.set(day, current + 1);
+        });
+    }
+
+    displayDailyCounts() {
+        const list = Array.from(this.transactionsByDay.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([day, count]) => `<li>Dzień ${day}: ${count.toLocaleString()}</li>`)
+            .join('');
+        if (this.elements.dailyTransactionsList) {
+            this.elements.dailyTransactionsList.innerHTML = list || '<li>Brak danych</li>';
+        }
     }
 
     prepareDisplayData() {

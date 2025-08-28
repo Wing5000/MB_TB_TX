@@ -347,6 +347,27 @@
                 flex-wrap: wrap;
             }
         }
+
+        .daily-transactions {
+            background: #1e293b;
+            margin: 30px 0;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .daily-transactions h2 {
+            color: #60a5fa;
+            margin-bottom: 15px;
+        }
+
+        .daily-transactions ul {
+            list-style: none;
+        }
+
+        .daily-transactions li {
+            margin-bottom: 8px;
+            color: #e2e8f0;
+        }
     </style>
 </head>
 <body>
@@ -389,6 +410,11 @@
                 <div class="metric-value" id="lastUpdate">-</div>
                 <div class="metric-label">Ostatnia aktualizacja</div>
             </div>
+        </div>
+
+        <div class="daily-transactions">
+            <h2>Transakcje wg dni od wdrożenia</h2>
+            <ul id="dailyTransactionsList"></ul>
         </div>
 
         <div id="errorContainer"></div>
