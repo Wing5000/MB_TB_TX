@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moonbeam Contract Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #60a5fa;
+            margin-bottom: 10px;
+            font-size: 2.2rem;
+        }
+
+        .contract-address {
+            font-family: 'Courier New', monospace;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            background: #1e293b;
+            padding: 8px 16px;
+            border-radius: 8px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 30px;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #374151;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle.active {
+            background: #10b981;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        .toggle.active .toggle-slider {
+            transform: translateX(24px);
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #94a3b8;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #374151;
+            border-top: 2px solid #60a5fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #60a5fa;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        .table-container {
+            background: #1e293b;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+        }
+
+        th {
+            background: #0f172a;
+            color: #60a5fa;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            transition: background 0.2s;
+        }
+
+        th:hover {
+            background: #1e293b;
+        }
+
+        .sort-indicator {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tbody tr {
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: #0f172a;
+        }
+
+        .rank {
+            color: #fbbf24;
+            font-weight: bold;
+            text-align: center;
+            width: 80px;
+        }
+
+        .address {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            max-width: 300px;
+            word-break: break-all;
+        }
+
+        .tx-count {
+            font-weight: bold;
+            color: #10b981;
+            text-align: right;
+            width: 120px;
+        }
+
+        .error-message {
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #dc2626;
+            text-align: center;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #94a3b8;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .pagination button {
+            background: #374151;
+            border: none;
+            color: #e2e8f0;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 100px;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: #4b5563;
+            transform: translateY(-1px);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .page-info {
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .controls {
+                flex-direction: column;
+                gap: 20px;
+            }
+
+            .metrics {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                font-size: 0.85rem;
+            }
+
+            th, td {
+                padding: 12px 10px;
+            }
+
+            .address {
+                font-size: 0.75rem;
+                max-width: 200px;
+            }
+
+            .pagination {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Moonbeam Contract Monitor</h1>
+            <div class="contract-address">0x86c66061a0e55d91c8bfa464fe84dc58f8733253</div>
+            <div style="background: #1e293b; padding: 10px; border-radius: 8px; margin-top: 10px; font-size: 0.85rem; color: #94a3b8; text-align: left;">
+                <strong style="color: #10b981;">✅ LIVE MODE:</strong> Używa prawdziwych danych z Moonbeam RPC<br>
+                🔗 Endpoints: rpc.api.moonbeam.network, ankr.com, 1rpc.io i inne<br>
+                📊 Pobiera wszystkie transakcje do kontraktu za pomocą eth_getLogs
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="auto-refresh">
+                <span>Auto-refresh (60s):</span>
+                <div class="toggle active" id="autoRefreshToggle">
+                    <div class="toggle-slider"></div>
+                </div>
+            </div>
+            <div class="status">
+                <span id="statusText">Inicjalizacja...</span>
+                <div id="loadingSpinner" class="spinner"></div>
+            </div>
+        </div>
+
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-value" id="uniqueAddresses">-</div>
+                <div class="metric-label">Unikalne adresy</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="totalTransactions">-</div>
+                <div class="metric-label">Łącznie transakcji</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="lastUpdate">-</div>
+                <div class="metric-label">Ostatnia aktualizacja</div>
+            </div>
+        </div>
+
+        <div id="errorContainer"></div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="rank" id="rankHeader">
+                            #
+                            <span class="sort-indicator">↓</span>
+                        </th>
+                        <th class="address" id="addressHeader">
+                            Adres
+                            <span class="sort-indicator"></span>
+                        </th>
+                        <th class="tx-count" id="txCountHeader">
+                            Transakcje
+                            <span class="sort-indicator"></span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="transactionTableBody">
+                    <tr>
+                        <td colspan="3" class="empty-state">Ładowanie danych...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pagination">
+            <button id="prevPage">‹ Poprzednia</button>
+            <span class="page-info" id="pageInfo">Strona 1</span>
+            <button id="nextPage">Następna ›</button>
+        </div>
+    </div>
+
+    <script>
+        class MoonbeamContractMonitor {
+            constructor() {
+                this.contractAddress = '0x86c66061a0e55d91c8bfa464fe84dc58f8733253';
+                this.rpcEndpoints = [
+                    'https://rpc.api.moonbeam.network',
+                    'https://moonbeam.blastapi.io/b8a802c6-651e-4cf0-a151-6ecbd1a18b9d',
+                    'https://moonbeam.unitedbloc.com:2000',
+                    'https://rpc.ankr.com/moonbeam',
+                    'https://1rpc.io/glmr'
+                ];
+                this.currentRpcIndex = 0;
+                
+                this.transactionData = new Map();
+                this.displayData = [];
+                this.currentPage = 1;
+                this.itemsPerPage = 25;
+                this.sortColumn = 'txCount';
+                this.sortDirection = 'desc';
+                this.autoRefreshEnabled = true;
+                this.refreshInterval = null;
+                this.isLoading = false;
+                this.refreshCount = 0;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.startInitialLoad();
+            }
+
+            initializeElements() {
+                this.elements = {
+                    autoRefreshToggle: document.getElementById('autoRefreshToggle'),
+                    statusText: document.getElementById('statusText'),
+                    loadingSpinner: document.getElementById('loadingSpinner'),
+                    uniqueAddresses: document.getElementById('uniqueAddresses'),
+                    totalTransactions: document.getElementById('totalTransactions'),
+                    lastUpdate: document.getElementById('lastUpdate'),
+                    errorContainer: document.getElementById('errorContainer'),
+                    prevPage: document.getElementById('prevPage'),
+                    nextPage: document.getElementById('nextPage'),
+                    pageInfo: document.getElementById('pageInfo'),
+                    tableBody: document.getElementById('transactionTableBody'),
+                    rankHeader: document.getElementById('rankHeader'),
+                    addressHeader: document.getElementById('addressHeader'),
+                    txCountHeader: document.getElementById('txCountHeader')
+                };
+            }
+
+            setupEventListeners() {
+                this.elements.autoRefreshToggle.addEventListener('click', () => {
+                    this.toggleAutoRefresh();
+                });
+
+                this.elements.prevPage.addEventListener('click', () => {
+                    if (this.currentPage > 1) {
+                        this.currentPage--;
+                        this.displayTable();
+                    }
+                });
+
+                this.elements.nextPage.addEventListener('click', () => {
+                    const maxPages = Math.ceil(this.displayData.length / this.itemsPerPage);
+                    if (this.currentPage < maxPages) {
+                        this.currentPage++;
+                        this.displayTable();
+                    }
+                });
+
+                // Sortowanie kolumn
+                this.elements.rankHeader.addEventListener('click', () => this.sortBy('rank'));
+                this.elements.addressHeader.addEventListener('click', () => this.sortBy('address'));
+                this.elements.txCountHeader.addEventListener('click', () => this.sortBy('txCount'));
+            }
+
+            toggleAutoRefresh() {
+                this.autoRefreshEnabled = !this.autoRefreshEnabled;
+                this.elements.autoRefreshToggle.classList.toggle('active', this.autoRefreshEnabled);
+                
+                if (this.autoRefreshEnabled) {
+                    this.startAutoRefresh();
+                } else {
+                    this.stopAutoRefresh();
+                }
+            }
+
+            startAutoRefresh() {
+                this.stopAutoRefresh();
+                this.refreshInterval = setInterval(() => {
+                    if (!this.isLoading) {
+                        this.refreshCount++;
+                        console.log(`Auto-refresh #${this.refreshCount}`);
+                        this.loadTransactionData();
+                    }
+                }, 60000);
+            }
+
+            stopAutoRefresh() {
+                if (this.refreshInterval) {
+                    clearInterval(this.refreshInterval);
+                    this.refreshInterval = null;
+                }
+            }
+
+            async startInitialLoad() {
+                await this.loadTransactionData();
+                if (this.autoRefreshEnabled) {
+                    this.startAutoRefresh();
+                }
+            }
+
+            showError(message) {
+                this.elements.errorContainer.innerHTML = `
+                    <div class="error-message">
+                        <strong>Błąd:</strong> ${message}
+                    </div>
+                `;
+            }
+
+            hideError() {
+                this.elements.errorContainer.innerHTML = '';
+            }
+
+            setLoading(loading) {
+                this.isLoading = loading;
+                this.elements.loadingSpinner.style.display = loading ? 'block' : 'none';
+                
+                if (loading) {
+                    this.elements.statusText.textContent = 'Pobieranie danych...';
+                } else {
+                    const count = this.transactionData.size;
+                    const total = Array.from(this.transactionData.values()).reduce((sum, count) => sum + count, 0);
+                    this.elements.statusText.textContent = `${count} adresów, ${total} transakcji`;
+                }
+            }
+
+            async loadTransactionData() {
+                this.setLoading(true);
+                this.hideError();
+
+                try {
+                    const allTransactions = await this.fetchAllTransactions();
+                    this.processTransactions(allTransactions);
+                    this.prepareDisplayData();
+                    this.displayTable();
+                    this.updateMetrics();
+                    
+                    console.log(`Załadowano ${allTransactions.length} transakcji z ${this.transactionData.size} unikalnych adresów`);
+                } catch (error) {
+                    console.error('Error loading transaction data:', error);
+                    
+                    let errorMessage = 'Nieznany błąd';
+                    if (error.message.includes('Failed to fetch')) {
+                        errorMessage = 'Problem z połączeniem internetowym. Sprawdź połączenie i spróbuj ponownie.';
+                    } else if (error.message.includes('Wszystkie RPC endpoints')) {
+                        errorMessage = 'Wszystkie RPC endpoints Moonbeam są niedostępne. Spróbuj ponownie za chwilę.';
+                    } else {
+                        errorMessage = error.message;
+                    }
+                    
+                    this.showError(errorMessage);
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            async fetchTransactionsWithRPC() {
+                const transactions = [];
+                let fromBlock = 0;
+                const toBlock = 'latest';
+                const batchSize = 5000; // Reasonable batch size
+                let currentFromBlock = fromBlock;
+                
+                console.log('🔍 Pobieranie transakcji z Moonbeam RPC...');
+                
+                // Get current block number first
+                const latestBlockHex = await this.makeRpcCall('eth_blockNumber', []);
+                const latestBlock = parseInt(latestBlockHex, 16);
+                console.log(`📊 Najnowszy blok: ${latestBlock}`);
+
+                while (currentFromBlock < latestBlock) {
+                    const batchToBlock = Math.min(currentFromBlock + batchSize - 1, latestBlock);
+                    
+                    console.log(`📦 Pobieranie bloków ${currentFromBlock} - ${batchToBlock}`);
+                    
+                    try {
+                        const logs = await this.makeRpcCall('eth_getLogs', [{
+                            fromBlock: `0x${currentFromBlock.toString(16)}`,
+                            toBlock: `0x${batchToBlock.toString(16)}`,
+                            address: this.contractAddress
+                        }]);
+
+                        if (logs && logs.length > 0) {
+                            // Dla każdego loga, pobierz szczegóły transakcji
+                            const batchTxs = await this.getTransactionDetails(logs);
+                            transactions.push(...batchTxs);
+                            console.log(`✅ Znaleziono ${logs.length} logów, ${batchTxs.length} unikalnych transakcji`);
+                        } else {
+                            console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
+                        }
+
+                    } catch (error) {
+                        console.error(`❌ Błąd dla bloków ${currentFromBlock} - ${batchToBlock}:`, error.message);
+                        // Try smaller batch on error
+                        if (batchSize > 1000 && error.message.includes('query returned more than')) {
+                            console.log('📉 Zmniejszam rozmiar batch...');
+                            batchSize = 1000;
+                            continue;
+                        }
+                    }
+
+                    currentFromBlock = batchToBlock + 1;
+                    
+                    // Add delay to avoid rate limiting
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Safety break for very large chains
+                    if (currentFromBlock > fromBlock + 50000) {
+                        console.log('🛑 Osiągnięto limit bezpieczeństwa (50k bloków)');
+                        break;
+                    }
+                }
+
+                console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
+                return transactions;
+            }
+
+            async getTransactionDetails(logs) {
+                const uniqueTxHashes = [...new Set(logs.map(log => log.transactionHash))];
+                const transactions = [];
+
+                for (const txHash of uniqueTxHashes) {
+                    try {
+                        const tx = await this.makeRpcCall('eth_getTransactionByHash', [txHash]);
+                        if (tx && tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase()) {
+                            transactions.push({
+                                from: tx.from,
+                                to: tx.to,
+                                hash: tx.hash,
+                                blockNumber: parseInt(tx.blockNumber, 16)
+                            });
+                        }
+                    } catch (error) {
+                        console.error(`Błąd pobierania transakcji ${txHash}:`, error.message);
+                    }
+                }
+
+                return transactions;
+            }
+
+            async makeRpcCall(method, params) {
+                let lastError = null;
+
+                // Try each RPC endpoint
+                for (let i = 0; i < this.rpcEndpoints.length; i++) {
+                    const rpcIndex = (this.currentRpcIndex + i) % this.rpcEndpoints.length;
+                    const rpcUrl = this.rpcEndpoints[rpcIndex];
+
+                    try {
+                        console.log(`🔗 Próbuję RPC ${rpcIndex + 1}/${this.rpcEndpoints.length}: ${rpcUrl.substring(0, 40)}...`);
+                        
+                        const response = await fetch(rpcUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                jsonrpc: '2.0',
+                                id: Date.now(),
+                                method: method,
+                                params: params
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.error) {
+                            throw new Error(`RPC Error: ${data.error.message || data.error.code}`);
+                        }
+
+                        if (!data.result && data.result !== 0 && data.result !== '0x0') {
+                            throw new Error('Brak wyniku w odpowiedzi RPC');
+                        }
+
+                        // Success - remember this endpoint works
+                        this.currentRpcIndex = rpcIndex;
+                        return data.result;
+
+                    } catch (error) {
+                        console.log(`❌ RPC ${rpcIndex + 1} nie działa: ${error.message}`);
+                        lastError = error;
+                        
+                        // Add delay before trying next endpoint
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                    }
+                }
+
+                // All endpoints failed
+                throw new Error(`Wszystkie RPC endpoints nie działają. Ostatni błąd: ${lastError?.message}`);
+            }
+
+            async fetchAllTransactions() {
+                return await this.fetchTransactionsWithRPC();
+            }
+
+            processTransactions(transactions) {
+                this.transactionData.clear();
+
+                transactions.forEach(tx => {
+                    // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
+                    const fromAddress = tx.from.toLowerCase();
+                    const current = this.transactionData.get(fromAddress) || 0;
+                    this.transactionData.set(fromAddress, current + 1);
+                });
+            }
+
+            prepareDisplayData() {
+                this.displayData = Array.from(this.transactionData.entries())
+                    .map(([address, txCount]) => ({
+                        address,
+                        txCount,
+                        rank: 0
+                    }));
+
+                this.sortData();
+            }
+
+            sortBy(column) {
+                if (this.sortColumn === column) {
+                    this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this.sortColumn = column;
+                    this.sortDirection = column === 'txCount' ? 'desc' : 'asc';
+                }
+
+                this.updateSortIndicators();
+                this.sortData();
+                this.displayTable();
+            }
+
+            updateSortIndicators() {
+                document.querySelectorAll('.sort-indicator').forEach(indicator => {
+                    indicator.textContent = '';
+                });
+
+                let activeHeader;
+                switch (this.sortColumn) {
+                    case 'rank':
+                        activeHeader = this.elements.rankHeader;
+                        break;
+                    case 'address':
+                        activeHeader = this.elements.addressHeader;
+                        break;
+                    case 'txCount':
+                        activeHeader = this.elements.txCountHeader;
+                        break;
+                }
+
+                if (activeHeader) {
+                    const indicator = activeHeader.querySelector('.sort-indicator');
+                    indicator.textContent = this.sortDirection === 'asc' ? '↑' : '↓';
+                }
+            }
+
+            sortData() {
+                this.displayData.sort((a, b) => {
+                    let comparison = 0;
+                    
+                    switch (this.sortColumn) {
+                        case 'rank':
+                            comparison = a.rank - b.rank;
+                            break;
+                        case 'address':
+                            comparison = a.address.localeCompare(b.address);
+                            break;
+                        case 'txCount':
+                            comparison = a.txCount - b.txCount;
+                            break;
+                    }
+
+                    return this.sortDirection === 'asc' ? comparison : -comparison;
+                });
+
+                // Aktualizuj rangi po sortowaniu
+                this.displayData.forEach((item, index) => {
+                    item.rank = index + 1;
+                });
+            }
+
+            displayTable() {
+                const start = (this.currentPage - 1) * this.itemsPerPage;
+                const end = start + this.itemsPerPage;
+                const pageData = this.displayData.slice(start, end);
+
+                if (pageData.length === 0) {
+                    this.elements.tableBody.innerHTML = `
+                        <tr>
+                            <td colspan="3" class="empty-state">Brak transakcji do wyświetlenia</td>
+                        </tr>
+                    `;
+                } else {
+                    this.elements.tableBody.innerHTML = pageData.map(item => `
+                        <tr>
+                            <td class="rank">${item.rank}</td>
+                            <td class="address">${item.address}</td>
+                            <td class="tx-count">${item.txCount.toLocaleString()}</td>
+                        </tr>
+                    `).join('');
+                }
+
+                this.updatePagination();
+            }
+
+            updatePagination() {
+                const maxPages = Math.ceil(this.displayData.length / this.itemsPerPage);
+                this.elements.pageInfo.textContent = maxPages > 0 ? `Strona ${this.currentPage} z ${maxPages}` : 'Strona 0 z 0';
+                this.elements.prevPage.disabled = this.currentPage === 1 || maxPages === 0;
+                this.elements.nextPage.disabled = this.currentPage >= maxPages || maxPages === 0;
+            }
+
+            updateMetrics() {
+                const uniqueCount = this.transactionData.size;
+                const totalTx = Array.from(this.transactionData.values()).reduce((sum, count) => sum + count, 0);
+                const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+                this.elements.uniqueAddresses.textContent = uniqueCount.toLocaleString();
+                this.elements.totalTransactions.textContent = totalTx.toLocaleString();
+                this.elements.lastUpdate.textContent = now;
+            }
+        }
+
+        // Uruchom monitor po załadowaniu strony
+        document.addEventListener('DOMContentLoaded', () => {
+            new MoonbeamContractMonitor();
+        });
+    </script>
+</body>
+</html>
