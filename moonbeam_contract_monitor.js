@@ -1,3 +1,5 @@
+const DATA_VERSION = 1;
+
 class MoonbeamContractMonitor {
     constructor() {
         this.contractAddress = '0x86c66061a0e55d91c8bfa464fe84dc58f8733253';
@@ -55,7 +57,8 @@ class MoonbeamContractMonitor {
             rankHeader: document.getElementById('rankHeader'),
             addressHeader: document.getElementById('addressHeader'),
             txCountHeader: document.getElementById('txCountHeader'),
-            addressSearch: document.getElementById('addressSearch')
+            addressSearch: document.getElementById('addressSearch'),
+            resetButton: document.getElementById('resetData')
         };
     }
 
@@ -77,6 +80,16 @@ class MoonbeamContractMonitor {
                 this.currentPage++;
                 this.displayTable();
             }
+        });
+
+        this.elements.resetButton.addEventListener('click', () => {
+            this.transactionData.clear();
+            this.lastFetchedBlock = 0;
+            this.saveState();
+            this.prepareDisplayData();
+            this.displayTable();
+            this.updateMetrics();
+            this.loadTransactionData();
         });
 
         // Sortowanie kolumn
@@ -127,6 +140,14 @@ class MoonbeamContractMonitor {
 
     loadState() {
         try {
+            const storedVersion = parseInt(localStorage.getItem('dataVersion') || '0', 10);
+            if (!storedVersion || storedVersion < DATA_VERSION) {
+                this.transactionData = new Map();
+                this.lastFetchedBlock = 0;
+                this.saveState();
+                return;
+            }
+
             const savedData = localStorage.getItem('transactionData');
             if (savedData) {
                 const parsed = JSON.parse(savedData);
@@ -150,6 +171,7 @@ class MoonbeamContractMonitor {
             const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
             localStorage.setItem('transactionData', serialized);
             localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
+            localStorage.setItem('dataVersion', DATA_VERSION.toString());
         } catch (error) {
             console.error('Error saving state to localStorage:', error);
         }

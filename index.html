@@ -55,6 +55,20 @@
             flex-wrap: wrap;
         }
 
+        #resetData {
+            background: #374151;
+            border: none;
+            color: #e2e8f0;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #resetData:hover {
+            background: #4b5563;
+        }
+
         #addressSearch {
             padding: 10px 15px;
             border-radius: 8px;
@@ -355,6 +369,7 @@
                     <div class="toggle-slider"></div>
                 </div>
             </div>
+            <button id="resetData">Załaduj od początku</button>
             <div class="status">
                 <span id="statusText">Inicjalizacja...</span>
                 <div id="loadingSpinner" class="spinner"></div>
