@@ -606,25 +606,57 @@
 
             async getTransactionDetails(logs) {
                 const uniqueTxHashes = [...new Set(logs.map(log => log.transactionHash))];
-                const transactions = [];
 
-                for (const txHash of uniqueTxHashes) {
-                    try {
-                        const tx = await this.makeRpcCall('eth_getTransactionByHash', [txHash]);
-                        if (tx && tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase()) {
-                            transactions.push({
-                                from: tx.from,
-                                to: tx.to,
-                                hash: tx.hash,
-                                blockNumber: parseInt(tx.blockNumber, 16)
-                            });
+                // Prosty limiter współbieżności (podobny do p-limit)
+                const createLimiter = (concurrency) => {
+                    const queue = [];
+                    let activeCount = 0;
+
+                    const next = () => {
+                        activeCount--;
+                        if (queue.length > 0) {
+                            const fn = queue.shift();
+                            fn();
                         }
-                    } catch (error) {
-                        console.error(`Błąd pobierania transakcji ${txHash}:`, error.message);
-                    }
-                }
+                    };
 
-                return transactions;
+                    return (fn) => new Promise((resolve, reject) => {
+                        const run = () => {
+                            activeCount++;
+                            Promise.resolve(fn()).then(resolve).catch(reject).finally(next);
+                        };
+
+                        if (activeCount < concurrency) {
+                            run();
+                        } else {
+                            queue.push(run);
+                        }
+                    });
+                };
+
+                const limit = createLimiter(5); // limit równoległych zapytań
+
+                const txPromises = uniqueTxHashes.map((txHash) =>
+                    limit(async () => {
+                        try {
+                            return await this.makeRpcCall('eth_getTransactionByHash', [txHash]);
+                        } catch (error) {
+                            console.error(`Błąd pobierania transakcji ${txHash}:`, error.message);
+                            return null;
+                        }
+                    })
+                );
+
+                const settled = await Promise.allSettled(txPromises);
+
+                return settled
+                    .filter(res => res.status === 'fulfilled' && res.value && res.value.to && res.value.to.toLowerCase() === this.contractAddress.toLowerCase())
+                    .map(res => ({
+                        from: res.value.from,
+                        to: res.value.to,
+                        hash: res.value.hash,
+                        blockNumber: parseInt(res.value.blockNumber, 16)
+                    }));
             }
 
             async makeRpcCall(method, params) {
