@@ -27,6 +27,7 @@ class MoonbeamContractMonitor {
         this.refreshCount = 0;
         this.searchQuery = '';
         this.searchTimeout = null;
+        this.lastFetchedBlock = 0;
         
         this.initializeElements();
         this.setupEventListeners();
@@ -242,6 +243,9 @@ class MoonbeamContractMonitor {
                     }));
 
                 console.log(`🔍 Pobieranie transakcji z Moonscan API: ${txs.length}`);
+                if (txs.length > 0) {
+                    this.lastFetchedBlock = txs.reduce((max, tx) => Math.max(max, tx.blockNumber), this.lastFetchedBlock);
+                }
                 return txs;
             } catch (error) {
                 console.error('Moonscan API error:', error.message);
@@ -256,24 +260,28 @@ class MoonbeamContractMonitor {
 
     async fetchTransactionsWithRPC() {
         const transactions = [];
-        let fromBlock = 0;
-        const toBlock = 'latest';
         // Rozmiar batch jest dynamiczny, zmniejszany przy błędach aby odciążyć RPC
         let batchSize = 5000; // Reasonable batch size
-        let currentFromBlock = fromBlock;
-        
+
         console.log('🔍 Pobieranie transakcji z Moonbeam RPC...');
-        
+
         // Get current block number first
         const latestBlockHex = await this.makeRpcCall('eth_blockNumber', []);
         const latestBlock = parseInt(latestBlockHex, 16);
         console.log(`📊 Najnowszy blok: ${latestBlock}`);
 
-        while (currentFromBlock < latestBlock) {
+        const fromBlock = this.lastFetchedBlock + 1;
+        if (fromBlock > latestBlock) {
+            console.log('⏭️  Brak nowych bloków do pobrania');
+            return transactions;
+        }
+
+        let currentFromBlock = fromBlock;
+        while (currentFromBlock <= latestBlock) {
             const batchToBlock = Math.min(currentFromBlock + batchSize - 1, latestBlock);
-            
+
             console.log(`📦 Pobieranie bloków ${currentFromBlock} - ${batchToBlock}`);
-            
+
             try {
                 const logs = await this.makeRpcCall('eth_getLogs', [{
                     fromBlock: `0x${currentFromBlock.toString(16)}`,
@@ -301,10 +309,10 @@ class MoonbeamContractMonitor {
             }
 
             currentFromBlock = batchToBlock + 1;
-            
+
             // Add delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             // Safety break for very large chains
             if (currentFromBlock > fromBlock + 50000) {
                 console.log('🛑 Osiągnięto limit bezpieczeństwa (50k bloków)');
@@ -312,6 +320,7 @@ class MoonbeamContractMonitor {
             }
         }
 
+        this.lastFetchedBlock = latestBlock;
         console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
         return transactions;
     }
@@ -427,22 +436,22 @@ class MoonbeamContractMonitor {
     }
 
     async fetchAllTransactions() {
-        try {
-            const moonscanTxs = await this.fetchTransactionsWithMoonscan();
-            if (moonscanTxs && moonscanTxs.length > 0) {
-                return moonscanTxs;
+        if (this.lastFetchedBlock === 0) {
+            try {
+                const moonscanTxs = await this.fetchTransactionsWithMoonscan();
+                if (moonscanTxs && moonscanTxs.length > 0) {
+                    return moonscanTxs;
+                }
+                console.log('ℹ️ Brak danych z Moonscanu, przełączam na RPC');
+            } catch (error) {
+                console.warn('⚠️ Błąd Moonscan, przełączam na RPC:', error.message);
             }
-            console.log('ℹ️ Brak danych z Moonscanu, przełączam na RPC');
-        } catch (error) {
-            console.warn('⚠️ Błąd Moonscan, przełączam na RPC:', error.message);
         }
 
         return await this.fetchTransactionsWithRPC();
     }
 
     processTransactions(transactions) {
-        this.transactionData.clear();
-
         transactions.forEach(tx => {
             // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
             const fromAddress = tx.from.toLowerCase();
