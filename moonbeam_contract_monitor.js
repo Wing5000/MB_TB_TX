@@ -353,7 +353,7 @@ class MoonbeamContractMonitor {
 
                 const data = await response.json();
                 if (data.status !== '1') {
-                    const message = (data.message || data.result || 'Unknown Moonscan error');
+                    const message = data.result || data.message || 'Unknown Moonscan error';
                     if (message.toLowerCase().includes('max rate limit')) {
                         const backoff = (attempt + 1) * 1000;
                         console.warn(`⚠️ Moonscan rate limit reached, retrying in ${backoff}ms`);
@@ -388,9 +388,18 @@ class MoonbeamContractMonitor {
             params.append('apikey', this.moonscanApiKey);
         }
 
-        const result = await this.makeMoonscanRequest(params);
-        const info = Array.isArray(result) ? result[0] : result;
-        return parseInt(info?.blockNumber || '0', 10);
+        try {
+            const result = await this.makeMoonscanRequest(params);
+            const info = Array.isArray(result) ? result[0] : result;
+            const block = parseInt(info?.blockNumber || '0', 10);
+            if (!block) {
+                throw new Error('Contract creation block not found');
+            }
+            return block;
+        } catch (error) {
+            console.warn('⚠️ Nie udało się pobrać bloku utworzenia kontraktu z Moonscanu:', error.message);
+            return 0;
+        }
     }
 
     /**
@@ -398,6 +407,10 @@ class MoonbeamContractMonitor {
      */
     async fetchHistoricalTransactions() {
         const startBlock = await this.getContractCreationBlock();
+        if (startBlock === 0) {
+            throw new Error('Cannot determine contract creation block');
+        }
+
         const latestBlockHex = await this.makeRpcCall('eth_blockNumber', []);
         const latestBlock = parseInt(latestBlockHex, 16);
 
