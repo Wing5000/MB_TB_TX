@@ -55,6 +55,18 @@
             flex-wrap: wrap;
         }
 
+        #addressSearch {
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: none;
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+
+        #addressSearch::placeholder {
+            color: #94a3b8;
+        }
+
         .auto-refresh {
             display: flex;
             align-items: center;
@@ -315,6 +327,7 @@
         </div>
 
         <div class="controls">
+            <input type="text" id="addressSearch" placeholder="Szukaj adresu">
             <div class="auto-refresh">
                 <span>Auto-refresh (60s):</span>
                 <div class="toggle active" id="autoRefreshToggle">
@@ -405,6 +418,8 @@
                 this.refreshInterval = null;
                 this.isLoading = false;
                 this.refreshCount = 0;
+                this.searchQuery = '';
+                this.searchTimeout = null;
                 
                 this.initializeElements();
                 this.setupEventListeners();
@@ -426,7 +441,8 @@
                     tableBody: document.getElementById('transactionTableBody'),
                     rankHeader: document.getElementById('rankHeader'),
                     addressHeader: document.getElementById('addressHeader'),
-                    txCountHeader: document.getElementById('txCountHeader')
+                    txCountHeader: document.getElementById('txCountHeader'),
+                    addressSearch: document.getElementById('addressSearch')
                 };
             }
 
@@ -454,6 +470,17 @@
                 this.elements.rankHeader.addEventListener('click', () => this.sortBy('rank'));
                 this.elements.addressHeader.addEventListener('click', () => this.sortBy('address'));
                 this.elements.txCountHeader.addEventListener('click', () => this.sortBy('txCount'));
+
+                this.elements.addressSearch.addEventListener('input', (e) => {
+                    clearTimeout(this.searchTimeout);
+                    const value = e.target.value.trim().toLowerCase();
+                    this.searchTimeout = setTimeout(() => {
+                        this.searchQuery = value;
+                        this.currentPage = 1;
+                        this.prepareDisplayData();
+                        this.displayTable();
+                    }, 300);
+                });
             }
 
             toggleAutoRefresh() {
@@ -811,7 +838,9 @@
             }
 
             prepareDisplayData() {
+                const query = this.searchQuery.toLowerCase();
                 this.displayData = Array.from(this.transactionData.entries())
+                    .filter(([address]) => address.toLowerCase().includes(query))
                     .map(([address, txCount]) => ({
                         address,
                         txCount,
