@@ -1,19 +1,28 @@
 class MoonbeamContractMonitor {
     constructor() {
         this.contractAddress = '0x86c66061a0e55d91c8bfa464fe84dc58f8733253';
-        this.rpcEndpoints = [
+
+        const defaultRpcEndpoints = [
             'https://rpc.api.moonbeam.network',
             'https://moonbeam.blastapi.io/b8a802c6-651e-4cf0-a151-6ecbd1a18b9d',
             'https://moonbeam.unitedbloc.com:2000',
             'https://rpc.ankr.com/moonbeam',
             'https://1rpc.io/glmr'
         ];
+        this.rpcEndpoints = window.RPC_ENDPOINT ? [window.RPC_ENDPOINT, ...defaultRpcEndpoints] : defaultRpcEndpoints;
         this.currentRpcIndex = 0;
 
         // Moonscan API configuration (set via localStorage: moonscanApiKey)
-        this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
+        try {
+            this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
+        } catch {
+            this.moonscanApiKey = '';
+        }
         this.moonscanRateLimit = 5; // requests per second
         this.moonscanLastRequest = 0;
+
+        this.proxyUrl = window.PROXY_URL || '';
+        this.dataSource = 'RPC';
         
         this.transactionData = new Map();
         this.displayData = [];
@@ -30,6 +39,7 @@ class MoonbeamContractMonitor {
         this.lastFetchedBlock = 0;
         
         this.initializeElements();
+        this.setDataSource(this.dataSource);
         this.setupEventListeners();
         this.startInitialLoad();
     }
@@ -50,7 +60,8 @@ class MoonbeamContractMonitor {
             rankHeader: document.getElementById('rankHeader'),
             addressHeader: document.getElementById('addressHeader'),
             txCountHeader: document.getElementById('txCountHeader'),
-            addressSearch: document.getElementById('addressSearch')
+            addressSearch: document.getElementById('addressSearch'),
+            dataSource: document.getElementById('dataSource')
         };
     }
 
@@ -132,6 +143,7 @@ class MoonbeamContractMonitor {
             <div class="error-message">
                 <div><strong>Błąd:</strong> ${friendlyMessage}</div>
                 <div class="technical-detail">${technicalDetail}</div>
+                <div>Źródło danych: ${this.dataSource}</div>
                 <button class="retry-button">Spróbuj ponownie</button>
             </div>
         `;
@@ -144,6 +156,13 @@ class MoonbeamContractMonitor {
 
     hideError() {
         this.elements.errorContainer.innerHTML = '';
+    }
+
+    setDataSource(source) {
+        this.dataSource = source;
+        if (this.elements?.dataSource) {
+            this.elements.dataSource.textContent = `Data: ${source}`;
+        }
     }
 
     setLoading(loading) {
@@ -215,7 +234,9 @@ class MoonbeamContractMonitor {
                 }
                 this.moonscanLastRequest = Date.now();
 
-                const response = await fetch(`${baseUrl}?${params.toString()}`);
+                const target = `${baseUrl}?${params.toString()}`;
+                const url = this.proxyUrl ? `${this.proxyUrl}?url=${encodeURIComponent(target)}` : target;
+                const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
@@ -261,7 +282,7 @@ class MoonbeamContractMonitor {
     async fetchTransactionsWithRPC() {
         const transactions = [];
         // Rozmiar batch jest dynamiczny, zmniejszany przy błędach aby odciążyć RPC
-        let batchSize = 5000; // Reasonable batch size
+        let batchSize = 4000; // Reasonable batch size
 
         console.log('🔍 Pobieranie transakcji z Moonbeam RPC...');
 
@@ -311,7 +332,7 @@ class MoonbeamContractMonitor {
             currentFromBlock = batchToBlock + 1;
 
             // Add delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 50));
 
             // Safety break for very large chains
             if (currentFromBlock > fromBlock + 50000) {
@@ -391,7 +412,9 @@ class MoonbeamContractMonitor {
             try {
                 console.log(`🔗 Próbuję RPC ${rpcIndex + 1}/${this.rpcEndpoints.length}: ${rpcUrl.substring(0, 40)}...`);
                 
-                const response = await fetch(rpcUrl, {
+                const target = rpcUrl;
+                const url = this.proxyUrl ? `${this.proxyUrl}?url=${encodeURIComponent(target)}` : target;
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -440,6 +463,7 @@ class MoonbeamContractMonitor {
             try {
                 const moonscanTxs = await this.fetchTransactionsWithMoonscan();
                 if (moonscanTxs && moonscanTxs.length > 0) {
+                    this.setDataSource('Moonscan');
                     return moonscanTxs;
                 }
                 console.log('ℹ️ Brak danych z Moonscanu, przełączam na RPC');
@@ -448,6 +472,7 @@ class MoonbeamContractMonitor {
             }
         }
 
+        this.setDataSource('RPC');
         return await this.fetchTransactionsWithRPC();
     }
 
