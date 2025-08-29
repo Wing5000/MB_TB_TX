@@ -1,24 +1,19 @@
 const DATA_VERSION = 1;
-const CONTRACT_DEPLOY_BLOCK = 11354233;
+const DEPLOY_BLOCK = 11354233;
 
 class MoonbeamContractMonitor {
     constructor() {
         this.contractAddress = '0x86c66061a0e55d91c8bfa464fe84dc58f8733253';
         this.rpcEndpoints = [
+            'https://moonbeam.unitedbloc.com:2000',
             'https://moonbeam.blastapi.io/0c196ae8-5d7c-4dc7-81b0-dcf08ddebddc',
             'https://rpc.api.moonbeam.network',
-            'https://moonbeam.unitedbloc.com:2000',
             'https://rpc.ankr.com/moonbeam',
             'https://1rpc.io/glmr'
         ];
         this.wssEndpoint = 'wss://moonbeam.blastapi.io/0c196ae8-5d7c-4dc7-81b0-dcf08ddebddc';
         this.currentRpcIndex = 0;
 
-        // Moonscan API configuration (set via localStorage: moonscanApiKey)
-        this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
-        this.moonscanRateLimit = 5; // requests per second
-        this.moonscanLastRequest = 0;
-        
         this.transactionData = new Map();
         this.displayData = [];
         this.currentPage = 1;
@@ -31,7 +26,7 @@ class MoonbeamContractMonitor {
         this.refreshCount = 0;
         this.searchQuery = '';
         this.searchTimeout = null;
-        this.lastFetchedBlock = 0;
+        this.lastFetchedBlock = DEPLOY_BLOCK - 1;
 
         this.loadState();
 
@@ -86,7 +81,7 @@ class MoonbeamContractMonitor {
 
         this.elements.resetButton.addEventListener('click', () => {
             this.transactionData.clear();
-            this.lastFetchedBlock = 0;
+            this.lastFetchedBlock = DEPLOY_BLOCK - 1;
             this.saveState();
             this.prepareDisplayData();
             this.displayTable();
@@ -145,7 +140,7 @@ class MoonbeamContractMonitor {
             const storedVersion = parseInt(localStorage.getItem('dataVersion') || '0', 10);
             if (!storedVersion || storedVersion < DATA_VERSION) {
                 this.transactionData = new Map();
-                this.lastFetchedBlock = 0;
+                this.lastFetchedBlock = DEPLOY_BLOCK - 1;
                 this.saveState();
                 return;
             }
@@ -251,116 +246,6 @@ class MoonbeamContractMonitor {
         } finally {
             this.setLoading(false);
         }
-    }
-
-    /**
-     * Ogólny wrapper dla zapytań do Moonscan API z obsługą limitów i ponowień.
-     */
-    async makeMoonscanRequest(params) {
-        const baseUrl = 'https://api-moonbeam.moonscan.io/api';
-        const maxRetries = 5;
-
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                const now = Date.now();
-                const delay = Math.max(0, (1000 / this.moonscanRateLimit) - (now - this.moonscanLastRequest));
-                if (delay > 0) {
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-                this.moonscanLastRequest = Date.now();
-
-                const url = `${baseUrl}?${params.toString()}`;
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
-                if (data.status !== '1') {
-                    const message = (data.message || data.result || 'Unknown Moonscan error');
-                    if (message.toLowerCase().includes('max rate limit')) {
-                        const backoff = (attempt + 1) * 1000;
-                        console.warn(`⚠️ Moonscan rate limit reached, retrying in ${backoff}ms`);
-                        await new Promise(resolve => setTimeout(resolve, backoff));
-                        continue;
-                    }
-                    throw new Error(message);
-                }
-
-                return data.result;
-            } catch (error) {
-                console.error('Moonscan API error:', error.message);
-                if (attempt === maxRetries - 1) {
-                    throw error;
-                }
-            }
-        }
-
-        return [];
-    }
-
-    /**
-     * Ustala blok startowy na podstawie transakcji tworzącej kontrakt.
-     */
-    async getContractCreationBlock() {
-        return CONTRACT_DEPLOY_BLOCK;
-    }
-
-    /**
-     * Pobiera pełną historię transakcji (zewnętrznych i wewnętrznych) z Moonscanu.
-     */
-    async fetchHistoricalTransactions() {
-        const startBlock = await this.getContractCreationBlock();
-        const latestBlockHex = await this.makeRpcCall('eth_blockNumber', []);
-        const latestBlock = parseInt(latestBlockHex, 16);
-
-        const step = 10000; // limit Moonscan API
-        let fromBlock = startBlock;
-        const allTxs = [];
-        const seen = new Set();
-
-        while (fromBlock <= latestBlock) {
-            const toBlock = Math.min(fromBlock + step - 1, latestBlock);
-
-            const baseParams = {
-                address: this.contractAddress,
-                startblock: fromBlock.toString(),
-                endblock: toBlock.toString(),
-                sort: 'asc'
-            };
-            const extParams = new URLSearchParams({ module: 'account', action: 'txlist', ...baseParams });
-            const intParams = new URLSearchParams({ module: 'account', action: 'txlistinternal', ...baseParams });
-            if (this.moonscanApiKey) {
-                extParams.append('apikey', this.moonscanApiKey);
-                intParams.append('apikey', this.moonscanApiKey);
-            }
-
-            const [ext, internal] = await Promise.all([
-                this.makeMoonscanRequest(extParams),
-                this.makeMoonscanRequest(intParams)
-            ]);
-
-            const parseTxs = (list) => (list || [])
-                .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase() && tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
-                .map(tx => ({
-                    from: tx.from,
-                    to: tx.to,
-                    hash: tx.hash,
-                    blockNumber: parseInt(tx.blockNumber)
-                }));
-
-            [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                if (!seen.has(tx.hash)) {
-                    seen.add(tx.hash);
-                    allTxs.push(tx);
-                }
-            });
-
-            fromBlock = toBlock + 1;
-        }
-
-        this.lastFetchedBlock = latestBlock;
-        return allTxs;
     }
 
     async fetchTransactionsWithRPC() {
@@ -541,14 +426,6 @@ class MoonbeamContractMonitor {
     }
 
     async fetchAllTransactions() {
-        if (this.lastFetchedBlock === 0) {
-            try {
-                return await this.fetchHistoricalTransactions();
-            } catch (error) {
-                console.warn('⚠️ Błąd pobierania historii z Moonscanu, przełączam na RPC:', error.message);
-            }
-        }
-
         return await this.fetchTransactionsWithRPC();
     }
 
