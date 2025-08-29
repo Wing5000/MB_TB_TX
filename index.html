@@ -81,7 +81,7 @@
             color: #94a3b8;
         }
 
-        .auto-refresh {
+        .auto-refresh, .failed-filter {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -240,6 +240,12 @@
             width: 120px;
         }
 
+        .failed-tx {
+            color: #ef4444;
+            font-weight: normal;
+            margin-left: 4px;
+        }
+
         .error-message {
             background: #7f1d1d;
             color: #fca5a5;
@@ -366,6 +372,12 @@
             <div class="auto-refresh">
                 <span>Auto-refresh (60s):</span>
                 <div class="toggle active" id="autoRefreshToggle">
+                    <div class="toggle-slider"></div>
+                </div>
+            </div>
+            <div class="failed-filter">
+                <span>Filtruj błędne:</span>
+                <div class="toggle active" id="failedFilterToggle">
                     <div class="toggle-slider"></div>
                 </div>
             </div>
