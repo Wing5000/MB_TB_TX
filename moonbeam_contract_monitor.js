@@ -1,4 +1,4 @@
-const DATA_VERSION = 1;
+const DATA_VERSION = 2;
 const DEFAULT_DEPLOY_BLOCK = 11354233;
 
 class MoonbeamContractMonitor {
@@ -33,6 +33,7 @@ class MoonbeamContractMonitor {
         this.searchTimeout = null;
         this.lastFetchedBlock = 0;
         this.contractCreationBlock = 0;
+        this.filterFailedTxs = true;
 
         this.loadState();
 
@@ -47,6 +48,7 @@ class MoonbeamContractMonitor {
     initializeElements() {
         this.elements = {
             autoRefreshToggle: document.getElementById('autoRefreshToggle'),
+            failedFilterToggle: document.getElementById('failedFilterToggle'),
             statusText: document.getElementById('statusText'),
             loadingSpinner: document.getElementById('loadingSpinner'),
             uniqueAddresses: document.getElementById('uniqueAddresses'),
@@ -63,11 +65,16 @@ class MoonbeamContractMonitor {
             addressSearch: document.getElementById('addressSearch'),
             resetButton: document.getElementById('resetData')
         };
+        this.elements.failedFilterToggle.classList.toggle('active', this.filterFailedTxs);
     }
 
     setupEventListeners() {
         this.elements.autoRefreshToggle.addEventListener('click', () => {
             this.toggleAutoRefresh();
+        });
+
+        this.elements.failedFilterToggle.addEventListener('click', () => {
+            this.toggleFailedFilter();
         });
 
         this.elements.prevPage.addEventListener('click', () => {
@@ -115,12 +122,25 @@ class MoonbeamContractMonitor {
     toggleAutoRefresh() {
         this.autoRefreshEnabled = !this.autoRefreshEnabled;
         this.elements.autoRefreshToggle.classList.toggle('active', this.autoRefreshEnabled);
-        
+
         if (this.autoRefreshEnabled) {
             this.startAutoRefresh();
         } else {
             this.stopAutoRefresh();
         }
+    }
+
+    toggleFailedFilter() {
+        this.filterFailedTxs = !this.filterFailedTxs;
+        this.elements.failedFilterToggle.classList.toggle('active', this.filterFailedTxs);
+
+        this.transactionData.clear();
+        this.lastFetchedBlock = 0;
+        this.saveState();
+        this.prepareDisplayData();
+        this.displayTable();
+        this.updateMetrics();
+        this.loadTransactionData();
     }
 
     startAutoRefresh() {
@@ -172,6 +192,11 @@ class MoonbeamContractMonitor {
                     this.contractCreationBlock = block;
                 }
             }
+
+            const savedFilter = localStorage.getItem('filterFailedTxs');
+            if (savedFilter !== null) {
+                this.filterFailedTxs = savedFilter === '1';
+            }
         } catch (error) {
             console.error('Error loading state from localStorage:', error);
         }
@@ -183,6 +208,7 @@ class MoonbeamContractMonitor {
             localStorage.setItem('transactionData', serialized);
             localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
             localStorage.setItem('contractCreationBlock', this.contractCreationBlock.toString());
+            localStorage.setItem('filterFailedTxs', this.filterFailedTxs ? '1' : '0');
             localStorage.setItem('dataVersion', DATA_VERSION.toString());
         } catch (error) {
             console.error('Error saving state to localStorage:', error);
@@ -223,7 +249,7 @@ class MoonbeamContractMonitor {
             this.elements.statusText.textContent = 'Pobieranie danych...';
         } else {
             const count = this.transactionData.size;
-            const total = Array.from(this.transactionData.values()).reduce((sum, count) => sum + count, 0);
+            const total = Array.from(this.transactionData.values()).reduce((sum, counts) => sum + counts.total, 0);
             this.elements.statusText.textContent = `${count} adresów, ${total} transakcji`;
         }
     }
@@ -235,9 +261,12 @@ class MoonbeamContractMonitor {
         try {
             const allTransactions = await this.fetchAllTransactions();
             const newData = this.processTransactions(allTransactions);
-            newData.forEach((count, address) => {
-                const current = this.transactionData.get(address) || 0;
-                this.transactionData.set(address, current + count);
+            newData.forEach((counts, address) => {
+                const current = this.transactionData.get(address) || { total: 0, failed: 0 };
+                this.transactionData.set(address, {
+                    total: current.total + counts.total,
+                    failed: current.failed + counts.failed
+                });
             });
             this.prepareDisplayData();
             this.displayTable();
@@ -383,12 +412,17 @@ class MoonbeamContractMonitor {
             ]);
 
             const parseTxs = (list) => (list || [])
-                .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase() && tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
+                .filter(tx => {
+                    if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
+                    const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
+                    return this.filterFailedTxs ? !failed : true;
+                })
                 .map(tx => ({
                     from: tx.from,
                     to: tx.to,
                     hash: tx.hash,
-                    blockNumber: parseInt(tx.blockNumber)
+                    blockNumber: parseInt(tx.blockNumber),
+                    failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
                 }));
 
             [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
@@ -440,18 +474,27 @@ class MoonbeamContractMonitor {
                 const uniqueTxs = new Map();
                 (traces || []).forEach(trace => {
                     if (!trace || !trace.transactionHash || !trace.action) return;
-                    if (uniqueTxs.has(trace.transactionHash)) return;
+                    const existing = uniqueTxs.get(trace.transactionHash);
+                    const failed = !!trace.error;
+                    if (existing) {
+                        if (!existing.failed && failed) {
+                            existing.failed = true;
+                        }
+                        return;
+                    }
                     uniqueTxs.set(trace.transactionHash, {
                         from: trace.action.from,
                         to: trace.action.to,
                         hash: trace.transactionHash,
-                        blockNumber: parseInt(trace.blockNumber, 16)
+                        blockNumber: parseInt(trace.blockNumber, 16),
+                        failed
                     });
                 });
 
-                if (uniqueTxs.size > 0) {
-                    transactions.push(...uniqueTxs.values());
-                    console.log(`✅ Znaleziono ${uniqueTxs.size} unikalnych transakcji`);
+                const txs = [...uniqueTxs.values()].filter(tx => this.filterFailedTxs ? !tx.failed : true);
+                if (txs.length > 0) {
+                    transactions.push(...txs);
+                    console.log(`✅ Znaleziono ${txs.length} unikalnych transakcji`);
                 } else {
                     console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
                 }
@@ -486,24 +529,36 @@ class MoonbeamContractMonitor {
                     ]);
 
                     const parseTxs = (list) => (list || [])
-                        .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase() && tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
+                        .filter(tx => {
+                            if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
+                            const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
+                            return this.filterFailedTxs ? !failed : true;
+                        })
                         .map(tx => ({
                             from: tx.from,
                             to: tx.to,
                             hash: tx.hash,
-                            blockNumber: parseInt(tx.blockNumber)
+                            blockNumber: parseInt(tx.blockNumber),
+                            failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
                         }));
 
                     const fallbackTxs = new Map();
                     [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                        if (!fallbackTxs.has(tx.hash)) {
-                            fallbackTxs.set(tx.hash, tx);
+                        const existing = fallbackTxs.get(tx.hash);
+                        if (existing) {
+                            if (!existing.failed && tx.failed) {
+                                existing.failed = true;
+                                fallbackTxs.set(tx.hash, existing);
+                            }
+                            return;
                         }
+                        fallbackTxs.set(tx.hash, tx);
                     });
 
-                    if (fallbackTxs.size > 0) {
-                        transactions.push(...fallbackTxs.values());
-                        console.log(`✅ (Moonscan) Znaleziono ${fallbackTxs.size} unikalnych transakcji`);
+                    const txs = [...fallbackTxs.values()].filter(tx => this.filterFailedTxs ? !tx.failed : true);
+                    if (txs.length > 0) {
+                        transactions.push(...txs);
+                        console.log(`✅ (Moonscan) Znaleziono ${txs.length} unikalnych transakcji`);
                     } else {
                         console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
                     }
@@ -599,10 +654,13 @@ class MoonbeamContractMonitor {
     processTransactions(transactions) {
         const newData = new Map();
         transactions.forEach(tx => {
-            // Wszystkie transakcje z RPC są już przefiltrowane (tylko do naszego kontraktu)
             const fromAddress = tx.from.toLowerCase();
-            const current = newData.get(fromAddress) || 0;
-            newData.set(fromAddress, current + 1);
+            const current = newData.get(fromAddress) || { total: 0, failed: 0 };
+            current.total += 1;
+            if (tx.failed) {
+                current.failed += 1;
+            }
+            newData.set(fromAddress, current);
         });
         return newData;
     }
@@ -611,9 +669,10 @@ class MoonbeamContractMonitor {
         const query = this.searchQuery.toLowerCase();
         this.displayData = Array.from(this.transactionData.entries())
             .filter(([address]) => address.toLowerCase().includes(query))
-            .map(([address, txCount]) => ({
+            .map(([address, counts]) => ({
                 address,
-                txCount,
+                txCount: counts.total,
+                failedCount: counts.failed,
                 rank: 0
             }));
 
@@ -698,7 +757,7 @@ class MoonbeamContractMonitor {
                 <tr>
                     <td class="rank">${item.rank}</td>
                     <td class="address">${item.address}</td>
-                    <td class="tx-count">${item.txCount.toLocaleString()}</td>
+                    <td class="tx-count">${item.txCount.toLocaleString()}${item.failedCount ? ` <span class="failed-tx">(${item.failedCount.toLocaleString()} bł.)</span>` : ''}</td>
                 </tr>
             `).join('');
         }
@@ -715,7 +774,7 @@ class MoonbeamContractMonitor {
 
     updateMetrics() {
         const uniqueCount = this.transactionData.size;
-        const totalTx = Array.from(this.transactionData.values()).reduce((sum, count) => sum + count, 0);
+        const totalTx = Array.from(this.transactionData.values()).reduce((sum, counts) => sum + counts.total, 0);
         const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
         this.elements.uniqueAddresses.textContent = uniqueCount.toLocaleString();
