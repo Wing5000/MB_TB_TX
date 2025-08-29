@@ -388,17 +388,28 @@ class MoonbeamContractMonitor {
             console.log(`📦 Pobieranie bloków ${currentFromBlock} - ${batchToBlock}`);
 
             try {
-                const logs = await this.makeRpcCall('eth_getLogs', [{
+                // trace_filter zwraca pełne informacje o transakcjach i wewnętrznych wywołaniach
+                const traces = await this.makeRpcCall('trace_filter', [{
                     fromBlock: `0x${currentFromBlock.toString(16)}`,
                     toBlock: `0x${batchToBlock.toString(16)}`,
-                    address: this.contractAddress
+                    toAddress: [this.contractAddress]
                 }]);
 
-                if (logs && logs.length > 0) {
-                    // Dla każdego loga, pobierz szczegóły transakcji
-                    const batchTxs = await this.getTransactionDetails(logs);
-                    transactions.push(...batchTxs);
-                    console.log(`✅ Znaleziono ${logs.length} logów, ${batchTxs.length} unikalnych transakcji`);
+                const uniqueTxs = new Map();
+                (traces || []).forEach(trace => {
+                    if (!trace || !trace.transactionHash || !trace.action) return;
+                    if (uniqueTxs.has(trace.transactionHash)) return;
+                    uniqueTxs.set(trace.transactionHash, {
+                        from: trace.action.from,
+                        to: trace.action.to,
+                        hash: trace.transactionHash,
+                        blockNumber: parseInt(trace.blockNumber, 16)
+                    });
+                });
+
+                if (uniqueTxs.size > 0) {
+                    transactions.push(...uniqueTxs.values());
+                    console.log(`✅ Znaleziono ${uniqueTxs.size} unikalnych transakcji`);
                 } else {
                     console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
                 }
@@ -410,6 +421,52 @@ class MoonbeamContractMonitor {
                     console.log('📉 Zmniejszam rozmiar batch...');
                     batchSize = Math.max(1000, Math.floor(batchSize / 2)); // dziel rozmiar przez 2, min. 1000
                     continue;
+                }
+
+                // Fallback na Moonscan, gdy trace_filter zawiedzie
+                try {
+                    const baseParams = {
+                        address: this.contractAddress,
+                        startblock: currentFromBlock.toString(),
+                        endblock: batchToBlock.toString(),
+                        sort: 'asc'
+                    };
+                    const extParams = new URLSearchParams({ module: 'account', action: 'txlist', ...baseParams });
+                    const intParams = new URLSearchParams({ module: 'account', action: 'txlistinternal', ...baseParams });
+                    if (this.moonscanApiKey) {
+                        extParams.append('apikey', this.moonscanApiKey);
+                        intParams.append('apikey', this.moonscanApiKey);
+                    }
+
+                    const [ext, internal] = await Promise.all([
+                        this.makeMoonscanRequest(extParams),
+                        this.makeMoonscanRequest(intParams)
+                    ]);
+
+                    const parseTxs = (list) => (list || [])
+                        .filter(tx => tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase() && tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
+                        .map(tx => ({
+                            from: tx.from,
+                            to: tx.to,
+                            hash: tx.hash,
+                            blockNumber: parseInt(tx.blockNumber)
+                        }));
+
+                    const fallbackTxs = new Map();
+                    [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
+                        if (!fallbackTxs.has(tx.hash)) {
+                            fallbackTxs.set(tx.hash, tx);
+                        }
+                    });
+
+                    if (fallbackTxs.size > 0) {
+                        transactions.push(...fallbackTxs.values());
+                        console.log(`✅ (Moonscan) Znaleziono ${fallbackTxs.size} unikalnych transakcji`);
+                    } else {
+                        console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
+                    }
+                } catch (msError) {
+                    console.error('❌ Moonscan fallback failed:', msError.message);
                 }
             }
 
@@ -428,61 +485,6 @@ class MoonbeamContractMonitor {
         this.lastFetchedBlock = latestBlock;
         console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
         return transactions;
-    }
-
-    async getTransactionDetails(logs) {
-        const uniqueTxHashes = [...new Set(logs.map(log => log.transactionHash))];
-
-        // Prosty limiter współbieżności (podobny do p-limit)
-        const createLimiter = (concurrency) => {
-            const queue = [];
-            let activeCount = 0;
-
-            const next = () => {
-                activeCount--;
-                if (queue.length > 0) {
-                    const fn = queue.shift();
-                    fn();
-                }
-            };
-
-            return (fn) => new Promise((resolve, reject) => {
-                const run = () => {
-                    activeCount++;
-                    Promise.resolve(fn()).then(resolve).catch(reject).finally(next);
-                };
-
-                if (activeCount < concurrency) {
-                    run();
-                } else {
-                    queue.push(run);
-                }
-            });
-        };
-
-        const limit = createLimiter(5); // limit równoległych zapytań
-
-        const txPromises = uniqueTxHashes.map((txHash) =>
-            limit(async () => {
-                try {
-                    return await this.makeRpcCall('eth_getTransactionByHash', [txHash]);
-                } catch (error) {
-                    console.error(`Błąd pobierania transakcji ${txHash}:`, error.message);
-                    return null;
-                }
-            })
-        );
-
-        const settled = await Promise.allSettled(txPromises);
-
-        return settled
-            .filter(res => res.status === 'fulfilled' && res.value && res.value.to && res.value.to.toLowerCase() === this.contractAddress.toLowerCase())
-            .map(res => ({
-                from: res.value.from,
-                to: res.value.to,
-                hash: res.value.hash,
-                blockNumber: parseInt(res.value.blockNumber, 16)
-            }));
     }
 
     async makeRpcCall(method, params) {
