@@ -14,11 +14,14 @@ class MoonbeamContractMonitor {
         this.wssEndpoint = 'wss://moonbeam.blastapi.io/0c196ae8-5d7c-4dc7-81b0-dcf08ddebddc';
         this.currentRpcIndex = 0;
 
-        // Moonscan API configuration (set via localStorage: moonscanApiKey)
-        this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
-        this.moonscanRateLimit = 5; // requests per second
-        this.moonscanLastRequest = 0;
-        
+        const envStart = parseInt(
+            (typeof process !== 'undefined' && process.env && process.env.START_BLOCK) ||
+            (typeof window !== 'undefined' && window.START_BLOCK) ||
+            '',
+            10
+        );
+        this.startBlock = !isNaN(envStart) ? envStart : DEFAULT_DEPLOY_BLOCK;
+
         this.transactionData = new Map();
         this.displayData = [];
         this.currentPage = 1;
@@ -32,10 +35,12 @@ class MoonbeamContractMonitor {
         this.searchQuery = '';
         this.searchTimeout = null;
         this.lastFetchedBlock = 0;
-        this.contractCreationBlock = 0;
         this.filterFailedTxs = true;
 
         this.loadState();
+        if (!this.lastFetchedBlock || this.lastFetchedBlock < this.startBlock - 1) {
+            this.lastFetchedBlock = this.startBlock - 1;
+        }
 
         this.initializeElements();
         this.setupEventListeners();
@@ -94,7 +99,7 @@ class MoonbeamContractMonitor {
 
         this.elements.resetButton.addEventListener('click', () => {
             this.transactionData.clear();
-            this.lastFetchedBlock = 0;
+            this.lastFetchedBlock = this.startBlock - 1;
             this.saveState();
             this.prepareDisplayData();
             this.displayTable();
@@ -185,12 +190,8 @@ class MoonbeamContractMonitor {
                 }
             }
 
-            const savedCreationBlock = localStorage.getItem('contractCreationBlock');
-            if (savedCreationBlock) {
-                const block = parseInt(savedCreationBlock, 10);
-                if (!isNaN(block)) {
-                    this.contractCreationBlock = block;
-                }
+            if (!this.lastFetchedBlock || this.lastFetchedBlock < this.startBlock - 1) {
+                this.lastFetchedBlock = this.startBlock - 1;
             }
 
             const savedFilter = localStorage.getItem('filterFailedTxs');
@@ -207,7 +208,6 @@ class MoonbeamContractMonitor {
             const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
             localStorage.setItem('transactionData', serialized);
             localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
-            localStorage.setItem('contractCreationBlock', this.contractCreationBlock.toString());
             localStorage.setItem('filterFailedTxs', this.filterFailedTxs ? '1' : '0');
             localStorage.setItem('dataVersion', DATA_VERSION.toString());
         } catch (error) {
@@ -292,175 +292,8 @@ class MoonbeamContractMonitor {
         }
     }
 
-    /**
-     * Ogólny wrapper dla zapytań do Moonscan API z obsługą limitów i ponowień.
-     */
-    async makeMoonscanRequest(params) {
-        const baseUrl = 'https://api-moonbeam.moonscan.io/api';
-        const maxRetries = 5;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                const now = Date.now();
-                const delay = Math.max(0, (1000 / this.moonscanRateLimit) - (now - this.moonscanLastRequest));
-                if (delay > 0) {
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-                this.moonscanLastRequest = Date.now();
 
-                const url = `${baseUrl}?${params.toString()}`;
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
-                if (data.status !== '1') {
-                    const message = (data.message || data.result || 'Unknown Moonscan error');
-                    if (message.toLowerCase().includes('max rate limit')) {
-                        const backoff = (attempt + 1) * 1000;
-                        console.warn(`⚠️ Moonscan rate limit reached, retrying in ${backoff}ms`);
-                        await new Promise(resolve => setTimeout(resolve, backoff));
-                        continue;
-                    }
-                    throw new Error(message);
-                }
-
-                return data.result;
-            } catch (error) {
-                console.error('Moonscan API error:', error.message);
-                if (attempt === maxRetries - 1) {
-                    throw error;
-                }
-            }
-        }
-
-        return [];
-    }
-
-    /**
-     * Ustala blok startowy na podstawie transakcji tworzącej kontrakt.
-     */
-    async getContractCreationBlock() {
-        if (this.contractCreationBlock) {
-            return this.contractCreationBlock;
-        }
-
-        try {
-            const params = new URLSearchParams({
-                module: 'contract',
-                action: 'getcontractcreation',
-                contractaddresses: this.contractAddress
-            });
-            if (this.moonscanApiKey) {
-                params.append('apikey', this.moonscanApiKey);
-            }
-
-            const result = await this.makeMoonscanRequest(params);
-            if (Array.isArray(result) && result.length > 0 && result[0].txHash) {
-                const txHash = result[0].txHash;
-                const receipt = await this.makeRpcCall('eth_getTransactionReceipt', [txHash]);
-                if (receipt && receipt.blockNumber) {
-                    const block = parseInt(receipt.blockNumber, 16);
-                    if (!isNaN(block)) {
-                        this.contractCreationBlock = block;
-                        localStorage.setItem('contractCreationBlock', block.toString());
-                        return block;
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn('Nie udało się pobrać bloku tworzenia kontraktu:', error.message);
-        }
-
-        this.contractCreationBlock = DEFAULT_DEPLOY_BLOCK;
-        return DEFAULT_DEPLOY_BLOCK;
-    }
-
-    /**
-     * Pobiera pełną historię transakcji (zewnętrznych i wewnętrznych) z Moonscanu.
-     */
-    async fetchHistoricalTransactions() {
-        const startBlock = await this.getContractCreationBlock();
-        const latestBlockHex = await this.makeRpcCall('eth_blockNumber', []);
-        const latestBlock = parseInt(latestBlockHex, 16);
-
-        const step = 10000; // limit Moonscan API
-        const offset = 10000; // max records per page supported by Moonscan
-        let fromBlock = startBlock;
-        const allTxs = [];
-        const seen = new Set();
-
-        while (fromBlock <= latestBlock) {
-            const toBlock = Math.min(fromBlock + step - 1, latestBlock);
-
-            const baseParams = {
-                address: this.contractAddress,
-                startblock: fromBlock.toString(),
-                endblock: toBlock.toString(),
-                sort: 'asc'
-            };
-
-            let page = 1;
-            while (true) {
-                const pageParams = { page: page.toString(), offset: offset.toString() };
-                const extParams = new URLSearchParams({
-                    module: 'account',
-                    action: 'txlist',
-                    ...baseParams,
-                    ...pageParams
-                });
-                const intParams = new URLSearchParams({
-                    module: 'account',
-                    action: 'txlistinternal',
-                    ...baseParams,
-                    ...pageParams
-                });
-                if (this.moonscanApiKey) {
-                    extParams.append('apikey', this.moonscanApiKey);
-                    intParams.append('apikey', this.moonscanApiKey);
-                }
-
-                const [ext, internal] = await Promise.all([
-                    this.makeMoonscanRequest(extParams),
-                    this.makeMoonscanRequest(intParams)
-                ]);
-
-                const parseTxs = (list) => (list || [])
-                    .filter(tx => {
-                        if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
-                        const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
-                        return this.filterFailedTxs ? !failed : true;
-                    })
-                    .map(tx => ({
-                        from: tx.from,
-                        to: tx.to,
-                        hash: tx.hash,
-                        blockNumber: parseInt(tx.blockNumber),
-                        failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
-                    }));
-
-                [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                    if (!seen.has(tx.hash)) {
-                        seen.add(tx.hash);
-                        allTxs.push(tx);
-                    }
-                });
-
-                const extLength = Array.isArray(ext) ? ext.length : 0;
-                const intLength = Array.isArray(internal) ? internal.length : 0;
-                if (extLength < offset && intLength < offset) {
-                    break;
-                }
-                page++;
-            }
-
-            fromBlock = toBlock + 1;
-        }
-
-        this.lastFetchedBlock = latestBlock;
-        return allTxs;
-    }
 
     async fetchTransactionsWithRPC() {
         const transactions = [];
@@ -529,64 +362,6 @@ class MoonbeamContractMonitor {
                     console.log('📉 Zmniejszam rozmiar batch...');
                     batchSize = Math.max(1000, Math.floor(batchSize / 2)); // dziel rozmiar przez 2, min. 1000
                     continue;
-                }
-
-                // Fallback na Moonscan, gdy trace_filter zawiedzie
-                try {
-                    const baseParams = {
-                        address: this.contractAddress,
-                        startblock: currentFromBlock.toString(),
-                        endblock: batchToBlock.toString(),
-                        sort: 'asc'
-                    };
-                    const extParams = new URLSearchParams({ module: 'account', action: 'txlist', ...baseParams });
-                    const intParams = new URLSearchParams({ module: 'account', action: 'txlistinternal', ...baseParams });
-                    if (this.moonscanApiKey) {
-                        extParams.append('apikey', this.moonscanApiKey);
-                        intParams.append('apikey', this.moonscanApiKey);
-                    }
-
-                    const [ext, internal] = await Promise.all([
-                        this.makeMoonscanRequest(extParams),
-                        this.makeMoonscanRequest(intParams)
-                    ]);
-
-                    const parseTxs = (list) => (list || [])
-                        .filter(tx => {
-                            if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
-                            const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
-                            return this.filterFailedTxs ? !failed : true;
-                        })
-                        .map(tx => ({
-                            from: tx.from,
-                            to: tx.to,
-                            hash: tx.hash,
-                            blockNumber: parseInt(tx.blockNumber),
-                            failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
-                        }));
-
-                    const fallbackTxs = new Map();
-                    [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                        const existing = fallbackTxs.get(tx.hash);
-                        if (existing) {
-                            if (!existing.failed && tx.failed) {
-                                existing.failed = true;
-                                fallbackTxs.set(tx.hash, existing);
-                            }
-                            return;
-                        }
-                        fallbackTxs.set(tx.hash, tx);
-                    });
-
-                    const txs = [...fallbackTxs.values()].filter(tx => this.filterFailedTxs ? !tx.failed : true);
-                    if (txs.length > 0) {
-                        transactions.push(...txs);
-                        console.log(`✅ (Moonscan) Znaleziono ${txs.length} unikalnych transakcji`);
-                    } else {
-                        console.log(`⏭️  Brak transakcji w blokach ${currentFromBlock} - ${batchToBlock}`);
-                    }
-                } catch (msError) {
-                    console.error('❌ Moonscan fallback failed:', msError.message);
                 }
             }
 
@@ -663,14 +438,6 @@ class MoonbeamContractMonitor {
     }
 
     async fetchAllTransactions() {
-        if (this.lastFetchedBlock === 0) {
-            try {
-                return await this.fetchHistoricalTransactions();
-            } catch (error) {
-                console.warn('⚠️ Błąd pobierania historii z Moonscanu, przełączam na RPC:', error.message);
-            }
-        }
-
         return await this.fetchTransactionsWithRPC();
     }
 
