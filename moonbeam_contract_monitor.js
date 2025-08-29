@@ -1,5 +1,6 @@
 const DATA_VERSION = 2;
-const DEFAULT_DEPLOY_BLOCK = 11354233;
+// Start from genesis if contract creation block cannot be determined
+const DEFAULT_DEPLOY_BLOCK = 0;
 
 class MoonbeamContractMonitor {
     constructor() {
@@ -15,7 +16,9 @@ class MoonbeamContractMonitor {
         this.currentRpcIndex = 0;
 
         // Moonscan API configuration (set via localStorage: moonscanApiKey)
-        this.moonscanApiKey = localStorage.getItem('moonscanApiKey') || '';
+        this.moonscanApiKey =
+            localStorage.getItem('moonscanApiKey') ||
+            'TVISG1UM6E925BVCFR7ZUWMIBB5VVEA4EC';
         this.moonscanRateLimit = 5; // requests per second
         this.moonscanLastRequest = 0;
         
@@ -163,27 +166,9 @@ class MoonbeamContractMonitor {
 
     loadState() {
         try {
-            const storedVersion = parseInt(localStorage.getItem('dataVersion') || '0', 10);
-            if (!storedVersion || storedVersion < DATA_VERSION) {
-                this.transactionData = new Map();
-                this.lastFetchedBlock = 0;
-                this.saveState();
-                return;
-            }
-
-            const savedData = localStorage.getItem('transactionData');
-            if (savedData) {
-                const parsed = JSON.parse(savedData);
-                this.transactionData = new Map(Object.entries(parsed));
-            }
-
-            const savedBlock = localStorage.getItem('lastFetchedBlock');
-            if (savedBlock) {
-                const block = parseInt(savedBlock, 10);
-                if (!isNaN(block)) {
-                    this.lastFetchedBlock = block;
-                }
-            }
+            // Always start fresh to fetch full history
+            this.transactionData = new Map();
+            this.lastFetchedBlock = 0;
 
             const savedCreationBlock = localStorage.getItem('contractCreationBlock');
             if (savedCreationBlock) {
@@ -206,7 +191,7 @@ class MoonbeamContractMonitor {
         try {
             const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
             localStorage.setItem('transactionData', serialized);
-            localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
+            // Do not store lastFetchedBlock so that we always reload from start
             localStorage.setItem('contractCreationBlock', this.contractCreationBlock.toString());
             localStorage.setItem('filterFailedTxs', this.filterFailedTxs ? '1' : '0');
             localStorage.setItem('dataVersion', DATA_VERSION.toString());
