@@ -386,6 +386,7 @@ class MoonbeamContractMonitor {
         const latestBlock = parseInt(latestBlockHex, 16);
 
         const step = 10000; // limit Moonscan API
+        const offset = 10000; // max records per page supported by Moonscan
         let fromBlock = startBlock;
         const allTxs = [];
         const seen = new Set();
@@ -399,38 +400,60 @@ class MoonbeamContractMonitor {
                 endblock: toBlock.toString(),
                 sort: 'asc'
             };
-            const extParams = new URLSearchParams({ module: 'account', action: 'txlist', ...baseParams });
-            const intParams = new URLSearchParams({ module: 'account', action: 'txlistinternal', ...baseParams });
-            if (this.moonscanApiKey) {
-                extParams.append('apikey', this.moonscanApiKey);
-                intParams.append('apikey', this.moonscanApiKey);
-            }
 
-            const [ext, internal] = await Promise.all([
-                this.makeMoonscanRequest(extParams),
-                this.makeMoonscanRequest(intParams)
-            ]);
-
-            const parseTxs = (list) => (list || [])
-                .filter(tx => {
-                    if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
-                    const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
-                    return this.filterFailedTxs ? !failed : true;
-                })
-                .map(tx => ({
-                    from: tx.from,
-                    to: tx.to,
-                    hash: tx.hash,
-                    blockNumber: parseInt(tx.blockNumber),
-                    failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
-                }));
-
-            [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
-                if (!seen.has(tx.hash)) {
-                    seen.add(tx.hash);
-                    allTxs.push(tx);
+            let page = 1;
+            while (true) {
+                const pageParams = { page: page.toString(), offset: offset.toString() };
+                const extParams = new URLSearchParams({
+                    module: 'account',
+                    action: 'txlist',
+                    ...baseParams,
+                    ...pageParams
+                });
+                const intParams = new URLSearchParams({
+                    module: 'account',
+                    action: 'txlistinternal',
+                    ...baseParams,
+                    ...pageParams
+                });
+                if (this.moonscanApiKey) {
+                    extParams.append('apikey', this.moonscanApiKey);
+                    intParams.append('apikey', this.moonscanApiKey);
                 }
-            });
+
+                const [ext, internal] = await Promise.all([
+                    this.makeMoonscanRequest(extParams),
+                    this.makeMoonscanRequest(intParams)
+                ]);
+
+                const parseTxs = (list) => (list || [])
+                    .filter(tx => {
+                        if (!tx.to || tx.to.toLowerCase() !== this.contractAddress.toLowerCase()) return false;
+                        const failed = !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'));
+                        return this.filterFailedTxs ? !failed : true;
+                    })
+                    .map(tx => ({
+                        from: tx.from,
+                        to: tx.to,
+                        hash: tx.hash,
+                        blockNumber: parseInt(tx.blockNumber),
+                        failed: !(tx.isError === '0' && (!tx.txreceipt_status || tx.txreceipt_status === '1'))
+                    }));
+
+                [...parseTxs(ext), ...parseTxs(internal)].forEach(tx => {
+                    if (!seen.has(tx.hash)) {
+                        seen.add(tx.hash);
+                        allTxs.push(tx);
+                    }
+                });
+
+                const extLength = Array.isArray(ext) ? ext.length : 0;
+                const intLength = Array.isArray(internal) ? internal.length : 0;
+                if (extLength < offset && intLength < offset) {
+                    break;
+                }
+                page++;
+            }
 
             fromBlock = toBlock + 1;
         }
