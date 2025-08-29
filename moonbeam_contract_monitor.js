@@ -1,5 +1,5 @@
 const DATA_VERSION = 1;
-const CONTRACT_DEPLOY_BLOCK = 11354233;
+const DEFAULT_DEPLOY_BLOCK = 11354233;
 
 class MoonbeamContractMonitor {
     constructor() {
@@ -32,6 +32,7 @@ class MoonbeamContractMonitor {
         this.searchQuery = '';
         this.searchTimeout = null;
         this.lastFetchedBlock = 0;
+        this.contractCreationBlock = 0;
 
         this.loadState();
 
@@ -163,6 +164,14 @@ class MoonbeamContractMonitor {
                     this.lastFetchedBlock = block;
                 }
             }
+
+            const savedCreationBlock = localStorage.getItem('contractCreationBlock');
+            if (savedCreationBlock) {
+                const block = parseInt(savedCreationBlock, 10);
+                if (!isNaN(block)) {
+                    this.contractCreationBlock = block;
+                }
+            }
         } catch (error) {
             console.error('Error loading state from localStorage:', error);
         }
@@ -173,6 +182,7 @@ class MoonbeamContractMonitor {
             const serialized = JSON.stringify(Object.fromEntries(this.transactionData));
             localStorage.setItem('transactionData', serialized);
             localStorage.setItem('lastFetchedBlock', this.lastFetchedBlock.toString());
+            localStorage.setItem('contractCreationBlock', this.contractCreationBlock.toString());
             localStorage.setItem('dataVersion', DATA_VERSION.toString());
         } catch (error) {
             console.error('Error saving state to localStorage:', error);
@@ -303,7 +313,39 @@ class MoonbeamContractMonitor {
      * Ustala blok startowy na podstawie transakcji tworzącej kontrakt.
      */
     async getContractCreationBlock() {
-        return CONTRACT_DEPLOY_BLOCK;
+        if (this.contractCreationBlock) {
+            return this.contractCreationBlock;
+        }
+
+        try {
+            const params = new URLSearchParams({
+                module: 'contract',
+                action: 'getcontractcreation',
+                contractaddresses: this.contractAddress
+            });
+            if (this.moonscanApiKey) {
+                params.append('apikey', this.moonscanApiKey);
+            }
+
+            const result = await this.makeMoonscanRequest(params);
+            if (Array.isArray(result) && result.length > 0 && result[0].txHash) {
+                const txHash = result[0].txHash;
+                const receipt = await this.makeRpcCall('eth_getTransactionReceipt', [txHash]);
+                if (receipt && receipt.blockNumber) {
+                    const block = parseInt(receipt.blockNumber, 16);
+                    if (!isNaN(block)) {
+                        this.contractCreationBlock = block;
+                        localStorage.setItem('contractCreationBlock', block.toString());
+                        return block;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Nie udało się pobrać bloku tworzenia kontraktu:', error.message);
+        }
+
+        this.contractCreationBlock = DEFAULT_DEPLOY_BLOCK;
+        return DEFAULT_DEPLOY_BLOCK;
     }
 
     /**
