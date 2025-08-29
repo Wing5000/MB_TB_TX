@@ -375,7 +375,7 @@ class MoonbeamContractMonitor {
         const latestBlock = parseInt(latestBlockHex, 16);
         console.log(`📊 Najnowszy blok: ${latestBlock}`);
 
-        const fromBlock = this.lastFetchedBlock + 1;
+        const fromBlock = Math.max(this.lastFetchedBlock + 1, CONTRACT_DEPLOY_BLOCK);
         if (fromBlock > latestBlock) {
             console.log('⏭️  Brak nowych bloków do pobrania');
             return transactions;
@@ -411,6 +411,11 @@ class MoonbeamContractMonitor {
                     batchSize = Math.max(1000, Math.floor(batchSize / 2)); // dziel rozmiar przez 2, min. 1000
                     continue;
                 }
+
+                // Fallback using eth_getBlockByNumber if eth_getLogs fails
+                console.log('🔁 Próba pobrania przez eth_getBlockByNumber');
+                const fallbackTxs = await this.fetchTransactionsByBlocks(currentFromBlock, batchToBlock);
+                transactions.push(...fallbackTxs);
             }
 
             currentFromBlock = batchToBlock + 1;
@@ -428,6 +433,33 @@ class MoonbeamContractMonitor {
         this.lastFetchedBlock = latestBlock;
         console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
         return transactions;
+    }
+
+    async fetchTransactionsByBlocks(fromBlock, toBlock) {
+        const txs = [];
+        for (let b = fromBlock; b <= toBlock; b++) {
+            try {
+                const block = await this.makeRpcCall('eth_getBlockByNumber', [`0x${b.toString(16)}`, true]);
+                if (block && Array.isArray(block.transactions)) {
+                    block.transactions.forEach(tx => {
+                        if (tx.to && tx.to.toLowerCase() === this.contractAddress.toLowerCase()) {
+                            txs.push({
+                                from: tx.from,
+                                to: tx.to,
+                                hash: tx.hash,
+                                blockNumber: parseInt(tx.blockNumber, 16)
+                            });
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error(`Błąd pobierania bloku ${b}:`, err.message);
+            }
+
+            // small delay to avoid overloading node
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return txs;
     }
 
     async getTransactionDetails(logs) {
