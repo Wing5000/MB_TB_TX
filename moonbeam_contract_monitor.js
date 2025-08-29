@@ -58,7 +58,9 @@ class MoonbeamContractMonitor {
             addressHeader: document.getElementById('addressHeader'),
             txCountHeader: document.getElementById('txCountHeader'),
             addressSearch: document.getElementById('addressSearch'),
-            resetButton: document.getElementById('resetData')
+            resetButton: document.getElementById('resetData'),
+            refreshButton: document.getElementById('refreshData'),
+            progressBar: document.getElementById('progressBar')
         };
     }
 
@@ -80,6 +82,10 @@ class MoonbeamContractMonitor {
                 this.currentPage++;
                 this.displayTable();
             }
+        });
+
+        this.elements.refreshButton.addEventListener('click', () => {
+            this.loadTransactionData();
         });
 
         this.elements.resetButton.addEventListener('click', () => {
@@ -213,6 +219,12 @@ class MoonbeamContractMonitor {
             const count = this.transactionData.size;
             const total = Array.from(this.transactionData.values()).reduce((sum, count) => sum + count, 0);
             this.elements.statusText.textContent = `${count} adresów, ${total} transakcji`;
+        }
+    }
+
+    updateProgress(percent) {
+        if (this.elements.progressBar) {
+            this.elements.progressBar.style.width = `${percent}%`;
         }
     }
 
@@ -390,6 +402,10 @@ class MoonbeamContractMonitor {
             return transactions;
         }
 
+        const totalBlocks = latestBlock - fromBlock + 1;
+        let processedBlocks = 0;
+        this.updateProgress(0);
+
         let currentFromBlock = fromBlock;
         while (currentFromBlock <= latestBlock) {
             const batchToBlock = Math.min(currentFromBlock + batchSize - 1, latestBlock);
@@ -422,6 +438,9 @@ class MoonbeamContractMonitor {
                 }
             }
 
+            processedBlocks += (batchToBlock - currentFromBlock + 1);
+            this.updateProgress((processedBlocks / totalBlocks) * 100);
+
             currentFromBlock = batchToBlock + 1;
 
             // Add delay to avoid rate limiting
@@ -435,6 +454,8 @@ class MoonbeamContractMonitor {
         }
 
         this.lastFetchedBlock = latestBlock;
+        this.updateProgress(100);
+        setTimeout(() => this.updateProgress(0), 500);
         console.log(`🎉 Pobieranie zakończone: ${transactions.length} unikalnych transakcji`);
         return transactions;
     }

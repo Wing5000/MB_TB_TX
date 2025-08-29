@@ -55,7 +55,7 @@
             flex-wrap: wrap;
         }
 
-        #resetData {
+        #resetData, #refreshData {
             background: #374151;
             border: none;
             color: #e2e8f0;
@@ -65,7 +65,7 @@
             transition: background 0.2s;
         }
 
-        #resetData:hover {
+        #resetData:hover, #refreshData:hover {
             background: #4b5563;
         }
 
@@ -312,6 +312,23 @@
             font-weight: 500;
         }
 
+        .progress-bar {
+            height: 4px;
+            background: #1e293b;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #2563eb, #60a5fa);
+            width: 0;
+            transition: width 0.3s;
+        }
+
         @media (max-width: 768px) {
             body {
                 padding: 15px;
@@ -350,6 +367,9 @@
     </style>
 </head>
 <body>
+    <div class="progress-bar">
+        <div class="progress-bar-fill" id="progressBar"></div>
+    </div>
     <div class="container">
         <div class="header">
             <h1>Moonbeam Contract Monitor</h1>
@@ -369,6 +389,7 @@
                     <div class="toggle-slider"></div>
                 </div>
             </div>
+            <button id="refreshData">Odśwież dane</button>
             <button id="resetData">Załaduj od początku</button>
             <div class="status">
                 <span id="statusText">Inicjalizacja...</span>
