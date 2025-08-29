@@ -1,15 +1,17 @@
 const DATA_VERSION = 1;
+const CONTRACT_DEPLOY_BLOCK = 11354233;
 
 class MoonbeamContractMonitor {
     constructor() {
         this.contractAddress = '0x86c66061a0e55d91c8bfa464fe84dc58f8733253';
         this.rpcEndpoints = [
+            'https://moonbeam.blastapi.io/0c196ae8-5d7c-4dc7-81b0-dcf08ddebddc',
             'https://rpc.api.moonbeam.network',
-            'https://moonbeam.blastapi.io/b8a802c6-651e-4cf0-a151-6ecbd1a18b9d',
             'https://moonbeam.unitedbloc.com:2000',
             'https://rpc.ankr.com/moonbeam',
             'https://1rpc.io/glmr'
         ];
+        this.wssEndpoint = 'wss://moonbeam.blastapi.io/0c196ae8-5d7c-4dc7-81b0-dcf08ddebddc';
         this.currentRpcIndex = 0;
 
         // Moonscan API configuration (set via localStorage: moonscanApiKey)
@@ -301,18 +303,7 @@ class MoonbeamContractMonitor {
      * Ustala blok startowy na podstawie transakcji tworzącej kontrakt.
      */
     async getContractCreationBlock() {
-        const params = new URLSearchParams({
-            module: 'contract',
-            action: 'getcontractcreation',
-            contractaddresses: this.contractAddress
-        });
-        if (this.moonscanApiKey) {
-            params.append('apikey', this.moonscanApiKey);
-        }
-
-        const result = await this.makeMoonscanRequest(params);
-        const info = Array.isArray(result) ? result[0] : result;
-        return parseInt(info?.blockNumber || '0', 10);
+        return CONTRACT_DEPLOY_BLOCK;
     }
 
     /**
