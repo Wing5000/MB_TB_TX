@@ -216,9 +216,36 @@ class MoonbeamContractMonitor {
     }
 
     async startInitialLoad() {
+        await this.loadHistoricalAddresses();
         await this.loadTransactionData();
         if (this.autoRefreshEnabled) {
             this.startAutoRefresh();
+        }
+    }
+
+    async loadHistoricalAddresses() {
+        try {
+            const response = await fetch('historical_addresses.json');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            if (typeof data.lastFetchedBlock === 'number') {
+                this.lastFetchedBlock = data.lastFetchedBlock;
+            }
+            if (Array.isArray(data.addresses)) {
+                data.addresses.forEach(entry => {
+                    const address = entry.address.toLowerCase();
+                    const count = Number(entry.txCount) || 0;
+                    const current = this.transactionData.get(address) || 0;
+                    this.transactionData.set(address, current + count);
+                });
+                this.prepareDisplayData();
+                this.displayTable();
+                this.updateMetrics();
+            }
+        } catch (err) {
+            console.warn('Nie można załadować historycznych adresów:', err.message);
         }
     }
 
